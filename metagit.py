@@ -2,6 +2,17 @@
 import os
 import sys
 import configparser
+import subprocess
+
+class UserMessage(Exception):
+    def __init__(self, msg, repo=None):
+        self.msg = msg
+        self.repo = repo
+    def __str__(self):
+        return self.msg
+
+def debug(*args):
+    print(' '.join(list(args)), file=sys.stderr)
 
 class RepoStatus:
     def __init__(self):
@@ -25,6 +36,41 @@ class GitRepository:
         self.path = os.path.expanduser(tilde_path)
         self.config = config # dict of settings
         self.name = os.path.basename(self.path)
+
+    def call(self, *args, stdout=None, may_fail=False):
+        git_cmd = [
+            'git',
+            '--work-tree=' + self.path,
+            '--git-dir=' + os.path.join(self.path, '.git'),
+        ]
+        git_cmd += list(args)
+        debug('calling', ' '.join(git_cmd))
+        proc = subprocess.Popen(git_cmd, stdout = stdout)
+        out,_ = proc.communicate()
+        exit_code = proc.wait()
+        if not may_fail and exit_code != 0:
+            raise UserMessage('Command {} failed with exit code {}'.format(\
+                ' '.join(git_cmd), exit_code))
+        else:
+            return exit_code, out
+        return out
+
+    def fetch(self):
+        if os.path.isdir(self.path):
+            # fetch
+            self.call('fetch')
+        else:
+            # clone
+            if not 'origin' in self.config:
+                raise RepoMessage(self, 'Can not run \'git clone\', because origin is unset.')
+            origin = self.config['origin']
+            cmd = ['git', 'clone', origin, self.path]
+            git = subprocess.Popen(cmd)
+            exit_code = git.wait()
+            if exit_code != 0:
+                raise UserMessage("Command {} failed with exit code {}".format(\
+                    ' '.join(cmd), exit_code), repo = self)
+
 
     def status(self):
         p = self.path
@@ -64,6 +110,7 @@ class Main:
             'add': Main.add,
             'st': Main.status,
             'status': Main.status,
+            'fetch': Main.fetch,
             'help': Main.help,
         }
         self.c = Config()
@@ -91,8 +138,17 @@ class Main:
         print("", file=file)
 
     def add(self, argv):
-        """add a new repository"""
+        """add a new repository
+
+        If no path is supplied, add the present git repository.
+        """
         pass
+
+    def fetch(self, argv):
+        """update all repositories"""
+        repos = self.c.repo_objects
+        for p,r in repos.items():
+            r.fetch()
 
     def status(self, argv):
         """list the status for the managed repositories"""
