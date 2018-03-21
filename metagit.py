@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import re
 import configparser
 import subprocess
 
@@ -30,6 +31,31 @@ class RepoStatus:
         else:
             return "exists"
 
+# return the absolute path of the git root for the current working directory
+# without trailing slashes, or None, if cwd does not live in a git repository
+def detect_git(cwd='.'):
+    cmd = ['git', 'rev-parse', '--show-toplevel']
+    proc = subprocess.Popen(cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            cwd=cwd)
+    stdout, stderr = proc.communicate()
+    status = proc.wait()
+    if status == 0 and stderr.decode() == '':
+        return re.sub('[/\r\n]*$', '', stdout.decode())
+    else:
+        return None;
+
+# return an absolute path with the home directory in the path replaced by ~
+def tilde_encode(cwd = '.'):
+    abspath = os.path.abspath(cwd)
+    home = os.path.expanduser('~')
+    if home == os.path.commonpath([home, abspath]):
+        r = os.path.relpath(abspath, start=home)
+        return os.path.join('~', os.path.relpath(abspath, start=home))
+    else:
+        return abspath
+
 class GitRepository:
     def __init__(self, tilde_path, config):
         self.tilde_path = tilde_path
@@ -47,12 +73,14 @@ class GitRepository:
         debug('calling', ' '.join(git_cmd))
         proc = subprocess.Popen(git_cmd, stdout = stdout)
         out,_ = proc.communicate()
+        if not out is None:
+            out = out.decode()
         exit_code = proc.wait()
-        if not may_fail and exit_code != 0:
+        if may_fail:
+            return exit_code, out
+        if exit_code != 0:
             raise UserMessage('Command {} failed with exit code {}'.format(\
                 ' '.join(git_cmd), exit_code))
-        else:
-            return exit_code, out
         return out
 
     def fetch(self):
@@ -71,6 +99,15 @@ class GitRepository:
                 raise UserMessage("Command {} failed with exit code {}".format(\
                     ' '.join(cmd), exit_code), repo = self)
 
+    @staticmethod
+    def create(path = '.'):
+        git = GitRepository(tilde_encode(path), {})
+        branch = 'master'
+        remote_name = git.call('config', 'branch.{}.remote'.format(branch),\
+                stdout=subprocess.PIPE).rstrip('\n')
+        git.config['origin'] = git.call('remote', 'get-url', remote_name,\
+                stdout=subprocess.PIPE).rstrip('\n')
+        return git
 
     def status(self):
         p = self.path
@@ -119,7 +156,10 @@ class Main:
             cmd = argv[1]
             if cmd in self.cmd_dict:
                 method = self.cmd_dict[cmd]
-                method(self, argv[2:])
+                try:
+                    method(self, argv[2:])
+                except Exception as e:
+                    print("Error: {}".format(str(e)))
             else:
                 print("Unknown command \"{}\".".format(cmd))
         else:
@@ -142,7 +182,24 @@ class Main:
 
         If no path is supplied, add the present git repository.
         """
-        pass
+        g = GitRepository.create()
+        filepath = self.c.filepath()
+        new_conf = configparser.ConfigParser()
+        new_conf[g.tilde_path] = g.config
+        with open(filepath, 'a') as filehandle:
+            new_conf.write(filehandle)
+        if os.path.islink(filepath):
+            filepath = os.readlink(filepath)
+        # detect the git repository handling the config
+        git_path = detect_git(os.path.dirname(filepath))
+        if git_path is None:
+            print("Config file {} not managed in a git, not committing anything"\
+                    .format(filepath))
+        else:
+            print("Committing changes to the git at {}".format(git_path))
+            config_repo = GitRepository(git_path, {})
+            msg = 'Add git ' + g.name
+            config_repo.call('commit', '-m', msg, '--', filepath)
 
     def fetch(self, argv):
         """update all repositories"""
