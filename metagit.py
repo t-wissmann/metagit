@@ -12,12 +12,63 @@ class UserMessage(Exception):
     def __str__(self):
         return self.msg
 
+debug_messages = False
 def debug(*args):
-    print(' '.join(list(args)), file=sys.stderr)
+    if debug_messages:
+        print(' '.join(list(args)), file=sys.stderr)
+
+def pretty_print_table(rows):
+    """pretty print a table, given as a list of lists
+    The first row is interpreted as the header
+    """
+    # determine column widths and row heights
+    widths = []
+    heights = []
+    for r in rows:
+        row_height = 1
+        for idx,c in enumerate(r):
+            while len(widths) <= idx:
+                widths += [ 0 ]
+            cell_lines = str(c).split('\n')
+            widths[idx] = max(widths[idx], max([ len(l) for l in cell_lines]) )
+            row_height = max(row_height, len(cell_lines))
+        heights += [ row_height ]
+    outbuf = ""
+    toprule = "━" * widths[0]
+    midrule = "─" * widths[0]
+    for w in widths[1:]:
+        toprule += "━"
+        toprule += "━" * w
+        midrule += "─"
+        midrule += "─" * w
+    outbuf += toprule + "\n"
+    for r_idx,r in enumerate(rows):
+        for cell_line in range(heights[r_idx]):
+            is_first_column = True
+            for idx,c in enumerate(r):
+                if widths[idx] <= 0:
+                    continue
+                if is_first_column:
+                    is_first_column = False
+                else:
+                    outbuf += ' '
+                formatstring = '{:' + str(widths[idx]) + 's}'
+                cell_content = str(c).split('\n')
+                cur_line = ""
+                if cell_line < len(cell_content):
+                    cur_line = cell_content[cell_line]
+                outbuf += formatstring.format(cur_line)
+            outbuf += '\n'
+        if r_idx == 0:
+            outbuf += midrule + "\n"
+    outbuf += toprule + "\n"
+    print(outbuf)
 
 class RepoStatus:
     def __init__(self):
         self.exists = True
+        self.uncommited_changes = 0
+        self.unpushed_commits = 0
         pass
 
     @staticmethod
@@ -29,7 +80,10 @@ class RepoStatus:
         if not self.exists:
             return "does not exist"
         else:
-            return "exists"
+            msg = ""
+            msg += "uncommited " if self.uncommited_changes > 0 else "clean "
+            msg += "unpushed " if self.unpushed_commits > 0 else "fully published"
+            return msg
 
 # return the absolute path of the git root for the current working directory
 # without trailing slashes, or None, if cwd does not live in a git repository
@@ -115,6 +169,9 @@ class GitRepository:
             return RepoStatus.nonExistent()
         else:
             rs = RepoStatus()
+            rs.uncommited_changes = len( \
+                self.call('status', '--porcelain=1', stdout=subprocess.PIPE) \
+                .split('\n')) - 1
             return rs
 
 class Config:
@@ -210,8 +267,22 @@ class Main:
     def status(self, argv):
         """list the status for the managed repositories"""
         repos = self.c.repo_objects
+        table = [
+            [ "repository\nname", "", "commit\nneeded", "push\nneeded" ]
+        ]
         for p,r in repos.items():
-            print("{}: {}".format(r.name, r.status()))
+            rs = r.status()
+            uncommited_changes = ""
+            if rs.uncommited_changes == 1:
+                uncommited_changes = "1 change"
+            elif rs.uncommited_changes > 1:
+                uncommited_changes = "{} changes".format(rs.uncommited_changes)
+            table.append([
+                r.name,
+                "not present" if not rs.exists else "",
+                uncommited_changes,
+            ])
+        pretty_print_table(table)
 
 Main(sys.argv)
 
