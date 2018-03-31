@@ -16,6 +16,8 @@ debug_messages = False
 def debug(*args):
     if debug_messages:
         print(' '.join(list(args)), file=sys.stderr)
+def warning(*args):
+    print(' '.join(list(args)), file=sys.stderr)
 
 def pretty_print_table(rows):
     """pretty print a table, given as a list of lists
@@ -69,6 +71,7 @@ class RepoStatus:
         self.exists = True
         self.uncommited_changes = 0
         self.unpushed_commits = 0
+        self.unmerged_commits = 0
         pass
 
     @staticmethod
@@ -125,16 +128,17 @@ class GitRepository:
         ]
         git_cmd += list(args)
         debug('calling', ' '.join(git_cmd))
-        proc = subprocess.Popen(git_cmd, stdout = stdout)
-        out,_ = proc.communicate()
+        proc = subprocess.Popen(git_cmd, stdout = stdout, \
+                                stderr = subprocess.PIPE)
+        out,err = proc.communicate()
         if not out is None:
             out = out.decode()
         exit_code = proc.wait()
         if may_fail:
             return exit_code, out
         if exit_code != 0:
-            raise UserMessage('Command {} failed with exit code {}'.format(\
-                ' '.join(git_cmd), exit_code))
+            raise UserMessage('Command »{}« failed with exit code {}: »{}«'.format(\
+                ' '.join(git_cmd), exit_code, err.decode().rstrip('\n')))
         return out
 
     def fetch(self):
@@ -166,6 +170,9 @@ class GitRepository:
                 stdout=subprocess.PIPE).rstrip('\n')
         return git
 
+    def main_branch(self):
+        return self.config.get('branch', 'master')
+
     def status(self):
         p = self.path
         if not os.path.isdir(p):
@@ -175,6 +182,19 @@ class GitRepository:
             rs.uncommited_changes = len( \
                 self.call('status', '--porcelain=1', stdout=subprocess.PIPE) \
                 .split('\n')) - 1
+            try:
+                rs.unmerged_commits = len( \
+                    self.call('log', '--format=format:X', \
+                        self.main_branch() + '..@{u}', \
+                    stdout=subprocess.PIPE) \
+                    .replace('\n', ''))
+                rs.unpushed_commits = len( \
+                    self.call('log', '--format=format:X', \
+                        '@{u}..' + self.main_branch(), \
+                    stdout=subprocess.PIPE) \
+                    .replace('\n', ''))
+            except Exception as e:
+                warning("Warning: Can not count commits: {}".format(e))
             return rs
 
 class Config:
@@ -275,19 +295,28 @@ class Main:
         """list the status for the managed repositories"""
         repos = self.c.repo_objects
         table = [
-            [ "repository\nname", "", "commit\nneeded", "push\nneeded" ]
+            [ "repository\nname",
+              "",
+              "uncommited\nchanges",
+              "push\nneeded",
+              "merge\nneeded",
+            ]
         ]
+        def countshow(cnt, suffix = None, suffix1 = None):
+            if cnt == 0:
+                return ""
+            elif cnt == 1:
+                return str(cnt) + ('' if suffix1 is None else ' ' + suffix1)
+            else:
+                return str(cnt) + ('' if suffix is None else ' ' + suffix)
         for p,r in repos.items():
             rs = r.status()
-            uncommited_changes = ""
-            if rs.uncommited_changes == 1:
-                uncommited_changes = "1 change"
-            elif rs.uncommited_changes > 1:
-                uncommited_changes = "{} changes".format(rs.uncommited_changes)
             table.append([
                 r.name,
                 "not present" if not rs.exists else "",
-                uncommited_changes,
+                countshow(rs.uncommited_changes, "changes", "change"),
+                countshow(rs.unpushed_commits, "commits", "commit"),
+                countshow(rs.unmerged_commits, "commits", "commit"),
             ])
         pretty_print_table(table)
 
