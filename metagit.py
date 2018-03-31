@@ -156,7 +156,10 @@ class GitRepository:
     @staticmethod
     def create(path = '.'):
         git = GitRepository(tilde_encode(path), {})
-        branch = 'master'
+        branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
+            stdout=subprocess.PIPE).rstrip('\n')
+        if branch != 'master':
+            git.config['branch'] = branch
         remote_name = git.call('config', 'branch.{}.remote'.format(branch),\
                 stdout=subprocess.PIPE).rstrip('\n')
         git.config['origin'] = git.call('remote', 'get-url', remote_name,\
