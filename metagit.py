@@ -243,24 +243,27 @@ class Main:
 
         If no path is supplied, add the present git repository.
         """
+        dry_run = False
+        commit_new_config = not dry_run
         g = GitRepository.create()
         filepath = self.c.filepath()
         new_conf = configparser.ConfigParser()
         new_conf[g.tilde_path] = g.config
-        with open(filepath, 'a') as filehandle:
+        with (sys.stdout if dry_run else open(filepath, 'a')) as filehandle:
             new_conf.write(filehandle)
         if os.path.islink(filepath):
             filepath = os.readlink(filepath)
-        # detect the git repository handling the config
-        git_path = detect_git(os.path.dirname(filepath))
-        if git_path is None:
-            print("Config file {} not managed in a git, not committing anything"\
-                    .format(filepath))
-        else:
-            print("Committing changes to the git at {}".format(git_path))
-            config_repo = GitRepository(git_path, {})
-            msg = 'Add git ' + g.name
-            config_repo.call('commit', '-m', msg, '--', filepath)
+        if commit_new_config:
+            # detect the git repository handling the config
+            git_path = detect_git(os.path.dirname(filepath))
+            if git_path is None:
+                print("Config file {} not managed in a git, not committing anything"\
+                        .format(filepath))
+            else:
+                print("Committing changes to the git at {}".format(git_path))
+                config_repo = GitRepository(git_path, {})
+                msg = 'Add git ' + g.name
+                config_repo.call('commit', '-m', msg, '--', filepath)
 
     def fetch(self, argv):
         """update all repositories"""
