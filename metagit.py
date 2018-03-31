@@ -222,8 +222,9 @@ class Main:
                     print("Error: {}".format(str(e)))
             else:
                 print("Unknown command \"{}\".".format(cmd))
+                self.help([], file=sys.stderr)
         else:
-            self.help([], file=sys.stderr)
+            self.status([])
 
 
     def help(self, argv, file=sys.stdout):
