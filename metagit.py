@@ -121,16 +121,21 @@ class GitRepository:
         self.config = config # dict of settings
         self.name = os.path.basename(self.path)
 
-    def call(self, *args, stdout=None, may_fail=False):
+    def call(self, *args, stdout=None, stderr=subprocess.PIPE, may_fail=False):
         git_cmd = [
             'git',
-            '--work-tree=' + self.path,
-            '--git-dir=' + os.path.join(self.path, '.git'),
         ]
+        if args[0] != 'clone' and args[0:2] != ('svn','clone'):
+            # passing these options to clone will make
+            # the repo lack the .git dir
+            git_cmd += [
+                '--work-tree=' + self.path,
+                '--git-dir=' + os.path.join(self.path, '.git'),
+            ]
         git_cmd += list(args)
         debug('calling', ' '.join(git_cmd))
         proc = subprocess.Popen(git_cmd, stdout = stdout, \
-                                stderr = subprocess.PIPE)
+                                stderr = stderr)
         out,err = proc.communicate()
         if not out is None:
             out = out.decode()
@@ -138,8 +143,12 @@ class GitRepository:
         if may_fail:
             return exit_code, out
         if exit_code != 0:
+            err_str = "" if err is None else err.decode().rstrip('\n')
             raise UserMessage('Command »{}« failed with exit code {}: »{}«'.format(\
-                ' '.join(git_cmd), exit_code, err.decode().rstrip('\n')))
+                ' '.join(git_cmd), exit_code, err_str))
+        else:
+            if not err is None:
+                print(err.decode(), end='', file=sys.stderr)
         return out
 
     def exists(self):
@@ -153,33 +162,17 @@ class GitRepository:
     def clone(self):
         if self.exists():
             return # nothing to do
-        # clone
         if not 'origin' in self.config:
             raise RepoMessage(self, 'Can not run \'git clone\', because origin is unset.')
         origin = self.config['origin']
         branch = self.main_branch()
-        cmd = ['git', 'clone', '-b', branch, origin, self.path]
-        git = subprocess.Popen(cmd)
-        exit_code = git.wait()
-        if exit_code != 0:
-            raise UserMessage("Command {} failed with exit code {}".format(\
-                ' '.join(cmd), exit_code), repo = self)
-
-    @staticmethod
-    def create(path = '.'):
-        git = GitRepository(tilde_encode(path), {})
-        branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
-            stdout=subprocess.PIPE).rstrip('\n')
-        if branch != 'master':
-            git.config['branch'] = branch
-        remote_name = git.call('config', 'branch.{}.remote'.format(branch),\
-                stdout=subprocess.PIPE).rstrip('\n')
-        git.config['origin'] = git.call('remote', 'get-url', remote_name,\
-                stdout=subprocess.PIPE).rstrip('\n')
-        return git
+        self.call('clone', '-b', branch, origin, self.path, stderr=None)
 
     def main_branch(self):
         return self.config.get('branch', 'master')
+
+    def upstream_branch(self):
+        return '@{u}'
 
     def status(self):
         p = self.path
@@ -193,17 +186,64 @@ class GitRepository:
             try:
                 rs.unmerged_commits = len( \
                     self.call('log', '--format=format:X', \
-                        self.main_branch() + '..@{u}', \
+                        self.main_branch() + '..' + self.upstream_branch(), \
                     stdout=subprocess.PIPE) \
                     .replace('\n', ''))
                 rs.unpushed_commits = len( \
                     self.call('log', '--format=format:X', \
-                        '@{u}..' + self.main_branch(), \
+                         self.upstream_branch() + '..' + self.main_branch(), \
                     stdout=subprocess.PIPE) \
                     .replace('\n', ''))
             except Exception as e:
                 warning("Warning: Can not count commits: {}".format(e))
             return rs
+
+class GitSvnRepository(GitRepository):
+    def __init__(self, tilde_path, config):
+        super().__init__(tilde_path, config)
+
+    def upstream_branch(self):
+        return 'git-svn'
+
+    def fetch(self):
+        if self.exists():
+            # fetch
+            self.call('svn', 'fetch')
+
+    def clone(self):
+        if self.exists():
+            return # nothing to do
+        if not 'origin' in self.config:
+            raise RepoMessage(self, 'Can not run \'git svn clone\', ' \
+                                    + 'because origin is unset.')
+        origin = self.config['origin']
+        branch = self.main_branch()
+        if branch != 'master':
+            raise RepoMessage(self, '\'git svn clone\' only works for branch master.')
+        self.call('svn', 'clone', origin, self.path, stderr=None)
+
+
+def CreateRepositoryConfig(path = '.'):
+    path = detect_git(path)
+    git = GitRepository(tilde_encode(path), {})
+    branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
+        stdout=subprocess.PIPE).rstrip('\n')
+    if branch != 'master':
+        git.config['branch'] = branch
+    exit_code,svn_remote_url = git.call('config', \
+            'svn-remote.svn.url', \
+            stdout=subprocess.PIPE, may_fail=True)
+    if exit_code == 0:
+        # detecting a svn remote
+        git.config['origin'] = svn_remote_url.rstrip('\n')
+        git.config['type'] = 'git-svn'
+    else:
+        # ordinary git
+        remote_name = git.call('config', 'branch.{}.remote'.format(branch),\
+                stdout=subprocess.PIPE).rstrip('\n')
+        git.config['origin'] = git.call('remote', 'get-url', remote_name,\
+                stdout=subprocess.PIPE).rstrip('\n')
+    return git
 
 class Config:
     def __init__(self):
@@ -227,7 +267,18 @@ class Config:
     def build_repo_objects(self):
         self.repo_objects = {}
         for path in self.config.sections():
-            self.repo_objects[path] = GitRepository(path, self.config[path])
+            repo_type = self.config[path].get('type', 'git')
+            obj = None
+            classes = {
+                'git': GitRepository,
+                'git-svn': GitSvnRepository,
+            }
+            if repo_type in classes:
+                self.repo_objects[path] = \
+                    classes[repo_type](path, self.config[path])
+            else:
+                raise UserMessage('Error in section {}: unknown type \'{}\''\
+                    .format(path, repo_type))
 
 class Main:
     def __init__(self, argv):
@@ -238,6 +289,7 @@ class Main:
         }
         self.cmd_dict = {
             'add': Main.add,
+            'clone': Main.clone,
             'st': Main.status,
             'status': Main.status,
             'fetch': Main.fetch,
@@ -252,7 +304,12 @@ class Main:
             },
         }
         self.c = Config()
-        self.c.reload()
+        try:
+            self.c.reload()
+        except UserMessage as e:
+            print("Error while loading config {}:\n{}"\
+                .format(self.c.filepath(), e))
+            sys.exit(1)
         self.print_help = False # if activated, only print help
         if len(sys.argv) >= 2:
             cmd = argv[1]
@@ -361,16 +418,13 @@ class Main:
         print("", file=file)
 
     def add(self, argv, options = []):
-        """add a new repository
-
-        If no path is supplied, add the present git repository.
-        """
+        """add a new repository"""
         dry_run = False
         for o,a in options:
             if o == '-n':
                 dry_run = True
         commit_new_config = not dry_run
-        g = GitRepository.create()
+        g = CreateRepositoryConfig()
         filepath = self.c.filepath()
         new_conf = configparser.ConfigParser()
         new_conf[g.tilde_path] = g.config
@@ -389,6 +443,15 @@ class Main:
                 config_repo = GitRepository(git_path, {})
                 msg = 'Add git ' + g.name
                 config_repo.call('commit', '-m', msg, '--', filepath)
+
+    def clone(self, argv):
+        """clone non-existend repositories"""
+        repos = self.c.repo_objects
+        for p,r in repos.items():
+            if r.exists():
+                print("{} exists".format(r.tilde_path))
+            else:
+                r.clone()
 
     def fetch(self, argv, options=[]):
         """update all repositories"""
