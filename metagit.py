@@ -4,6 +4,7 @@ import sys
 import re
 import configparser
 import subprocess
+import getopt
 
 class UserMessage(Exception):
     def __init__(self, msg, repo=None):
@@ -141,21 +142,28 @@ class GitRepository:
                 ' '.join(git_cmd), exit_code, err.decode().rstrip('\n')))
         return out
 
+    def exists(self):
+        return os.path.isdir(self.path)
+
     def fetch(self):
-        if os.path.isdir(self.path):
+        if self.exists():
             # fetch
             self.call('fetch')
-        else:
-            # clone
-            if not 'origin' in self.config:
-                raise RepoMessage(self, 'Can not run \'git clone\', because origin is unset.')
-            origin = self.config['origin']
-            cmd = ['git', 'clone', origin, self.path]
-            git = subprocess.Popen(cmd)
-            exit_code = git.wait()
-            if exit_code != 0:
-                raise UserMessage("Command {} failed with exit code {}".format(\
-                    ' '.join(cmd), exit_code), repo = self)
+
+    def clone(self):
+        if self.exists():
+            return # nothing to do
+        # clone
+        if not 'origin' in self.config:
+            raise RepoMessage(self, 'Can not run \'git clone\', because origin is unset.')
+        origin = self.config['origin']
+        branch = self.main_branch()
+        cmd = ['git', 'clone', '-b', branch, origin, self.path]
+        git = subprocess.Popen(cmd)
+        exit_code = git.wait()
+        if exit_code != 0:
+            raise UserMessage("Command {} failed with exit code {}".format(\
+                ' '.join(cmd), exit_code), repo = self)
 
     @staticmethod
     def create(path = '.'):
@@ -223,6 +231,11 @@ class Config:
 
 class Main:
     def __init__(self, argv):
+        self.global_opts = {
+            'v': 'activate verbose output',
+            'help': '',
+            'h': 'print this help',
+        }
         self.cmd_dict = {
             'add': Main.add,
             'st': Main.status,
@@ -230,21 +243,106 @@ class Main:
             'fetch': Main.fetch,
             'help': Main.help,
         }
+        self.opts_dict = {
+            Main.fetch: {
+                'c': 'clone repository if it does not exist locally',
+            },
+            Main.add: {
+                'n': 'dry run: only print config',
+            },
+        }
         self.c = Config()
         self.c.reload()
+        self.print_help = False # if activated, only print help
         if len(sys.argv) >= 2:
             cmd = argv[1]
             if cmd in self.cmd_dict:
                 method = self.cmd_dict[cmd]
-                try:
-                    method(self, argv[2:])
-                except Exception as e:
-                    print("Error: {}".format(str(e)))
+                cmd_opts = self.opts_dict.get(method, {})
+                res = self.run_cmd(cmd, method, cmd_opts, argv[2:])
+                if not res is None:
+                    sys.exit(res)
             else:
                 print("Unknown command \"{}\".".format(cmd))
                 self.help([], file=sys.stderr)
+                sys.exit(1)
         else:
             self.status([])
+
+    def run_cmd(self, name, method, cmd_opts, argv):
+        try:
+            so, lo = self.assemple_opts_from_dict(cmd_opts)
+            opts, cmd_args = self.getopt(argv, so, lo)
+            if self.print_help:
+                self.cmd_help(name, method, cmd_opts, file=sys.stdout)
+            else:
+                if len(cmd_opts) > 0:
+                    return method(self, cmd_args, options = opts)
+                else:
+                    return method(self, cmd_args)
+        except getopt.GetoptError as err:
+            # print help information and exit:
+            print(name + ": " + str(err), file=sys.stderr)
+            self.cmd_help(name, method, cmd_opts, file=sys.stderr)
+            return 1
+        except UserMessage as e:
+            print("Error: {}".format(str(e)))
+            return 1
+        except KeyboardInterrupt as e:
+            print("Interrupted.", file=sys.stderr)
+            return 1
+
+    def cmd_help(self, name, method, cmd_opts, file=sys.stdout):
+        print("Usage: {} {} [ARGS]".format(sys.argv[0], name), file=file)
+        print("", file=file)
+        print(method.__doc__, file=file)
+        print("", file=file)
+        print("The following global options are accepted:", file=file)
+        print("", file=file)
+        self.print_opts_doc(self.global_opts, file=file)
+        print("", file=file)
+        if len(cmd_opts) > 0:
+            print("Additionally, the following options are accepted:", file=file)
+            print("", file=file)
+            self.print_opts_doc(cmd_opts, file=file)
+            print("", file=file)
+
+    def print_opts_doc(self, cmd_opts, file=sys.stdout):
+        for o,helpstring in cmd_opts.items():
+            o_str = ''
+            o_str = '-' if len(o.rstrip(':')) == 1 else '--'
+            o_str += o.replace(':', ' ')
+            if o.rstrip(':=') != o: # if the option expects a parameter
+                o_str += 'X'
+            print("  {:10s} {}".format(o_str, helpstring), file=file)
+
+    def assemple_opts_from_dict(self, cmd_opts):
+        shortopts = ''
+        longopts = []
+        for o,_ in cmd_opts.items():
+            if len(o) == 1 or o[1] == ':':
+                shortopts += o
+            else:
+                longopts.append(o)
+        return shortopts, longopts
+
+    def getopt(self, argv, shortopts, longopts):
+        # add global options
+        so, lo = self.assemple_opts_from_dict(self.global_opts)
+        shortopts += so
+        longopts += lo
+        local_options = []
+        opts, args = getopt.getopt(argv, shortopts, longopts)
+        cmd_specific_opts = []
+        for o, a in opts:
+            if o == '-v':
+                global debug_messages
+                debug_messages = True
+            elif o == '-h' or o == '--help':
+                self.print_help = True
+            else:
+                cmd_specific_opts.append((o,a))
+        return cmd_specific_opts, args
 
 
     def help(self, argv, file=sys.stdout):
@@ -257,13 +355,20 @@ class Main:
             helpstring = method.__doc__.split('\n', 1)[0]
             print("  {:10s} {}".format(cmd, helpstring), file=file)
         print("", file=file)
+        print("All commands accept the following global options:", file=file)
+        print("", file=file)
+        self.print_opts_doc(self.global_opts, file=file)
+        print("", file=file)
 
-    def add(self, argv):
+    def add(self, argv, options = []):
         """add a new repository
 
         If no path is supplied, add the present git repository.
         """
         dry_run = False
+        for o,a in options:
+            if o == '-n':
+                dry_run = True
         commit_new_config = not dry_run
         g = GitRepository.create()
         filepath = self.c.filepath()
@@ -285,11 +390,21 @@ class Main:
                 msg = 'Add git ' + g.name
                 config_repo.call('commit', '-m', msg, '--', filepath)
 
-    def fetch(self, argv):
+    def fetch(self, argv, options=[]):
         """update all repositories"""
+        clone_if_necessary = False
+        for o,a in options:
+            if o == '-c':
+                clone_if_necessary = True
         repos = self.c.repo_objects
         for p,r in repos.items():
-            r.fetch()
+            if r.exists():
+                r.fetch()
+            else:
+                if clone_if_necessary:
+                    r.clone()
+                else:
+                    print("{} does not exist".format(r.tilde_path))
 
     def status(self, argv):
         """list the status for the managed repositories"""
