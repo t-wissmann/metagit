@@ -70,6 +70,7 @@ def pretty_print_table(rows):
 class RepoStatus:
     def __init__(self):
         self.exists = True
+        self.untracked_files = 0
         self.uncommited_changes = 0
         self.unpushed_commits = 0
         self.unmerged_commits = 0
@@ -180,9 +181,12 @@ class GitRepository:
             return RepoStatus.nonExistent()
         else:
             rs = RepoStatus()
-            rs.uncommited_changes = len( \
-                self.call('status', '--porcelain=1', stdout=subprocess.PIPE) \
-                .split('\n')) - 1
+            git_status_lines = self.call('status', '--porcelain=1', stdout=subprocess.PIPE).splitlines()
+            for line in git_status_lines:
+                if line[0:2] == '??':
+                    rs.untracked_files += 1
+                else:
+                    rs.uncommited_changes += 1
             try:
                 rs.unmerged_commits = len( \
                     self.call('log', '--format=format:X', \
@@ -492,7 +496,10 @@ class Main:
             table.append([
                 r.name,
                 "not present" if not rs.exists else "",
-                countshow(rs.uncommited_changes, "changes", "change"),
+                '\n'.join(filter(lambda x: x != '', [
+                    countshow(rs.untracked_files, "new files", "new file"),
+                    countshow(rs.uncommited_changes, "changes", "change"),
+                ])),
                 countshow(rs.unpushed_commits, "commits", "commit"),
                 countshow(rs.unmerged_commits, "commits", "commit"),
             ])
