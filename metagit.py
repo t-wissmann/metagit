@@ -422,6 +422,16 @@ class Main:
 
     def help(self, argv, file=sys.stdout):
         """print this help"""
+        if len(argv) > 0:
+            cmd = argv[0]
+            if cmd in self.cmd_dict:
+                method = self.cmd_dict[cmd]
+                cmd_opts = self.opts_dict.get(method, {})
+                self.cmd_help(cmd, method, cmd_opts)
+                return 0
+            else:
+                print("Error: command {} not found".format(cmd), file=sys.stderr)
+                return 1
         print("Usage: {} SUBCMD [ARGS]".format(sys.argv[0]), file=file)
         print("", file=file)
         print("Call the specified SUBCMD, which is one of the following:", file=file)
