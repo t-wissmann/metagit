@@ -372,15 +372,15 @@ class Main:
         print("", file=file)
         print(method.__doc__, file=file)
         print("", file=file)
-        print("The following global options are accepted:", file=file)
-        print("", file=file)
-        self.print_opts_doc(self.global_opts, file=file)
-        print("", file=file)
         if len(cmd_opts) > 0:
-            print("Additionally, the following options are accepted:", file=file)
+            print("The following options are accepted:", file=file)
             print("", file=file)
             self.print_opts_doc(cmd_opts, file=file)
             print("", file=file)
+        print("Additonally, the following global options are accepted:", file=file)
+        print("", file=file)
+        self.print_opts_doc(self.global_opts, file=file)
+        print("", file=file)
 
     def print_opts_doc(self, cmd_opts, file=sys.stdout):
         for o,helpstring in cmd_opts.items():
