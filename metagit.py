@@ -20,6 +20,17 @@ def debug(*args):
 def warning(*args):
     print(' '.join(list(args)), file=sys.stderr)
 
+def ask(question, default = None):
+    prompt = ' [{}/{}]'.format(
+        ('Y' if default == True else 'y'),
+        ('N' if default == False else 'n'))
+    answer = input(question + prompt + ' ')
+    if len(answer) < 1:
+        return default
+    else:
+        return answer[0].lower() == 'y'
+
+
 def pretty_print_table(rows):
     """pretty print a table, given as a list of lists
     The first row is interpreted as the header
@@ -303,6 +314,9 @@ class Main:
             Main.fetch: {
                 'c': 'clone repository if it does not exist locally',
             },
+            Main.clone: {
+                'i': 'ask before cloning',
+            },
             Main.add: {
                 'n': 'dry run: only print config',
             },
@@ -448,14 +462,20 @@ class Main:
                 msg = 'Add git ' + g.name
                 config_repo.call('commit', '-m', msg, '--', filepath)
 
-    def clone(self, argv):
+    def clone(self, argv, options):
         """clone non-existend repositories"""
         repos = self.c.repo_objects
+        interactive = False
+        for o,a in options:
+            if o == '-i':
+                interactive = True
+
         for p,r in repos.items():
             if r.exists():
                 print("{} exists".format(r.tilde_path))
             else:
-                r.clone()
+                if not interactive or ask('Clone {}?'.format(p)):
+                    r.clone()
 
     def fetch(self, argv, options=[]):
         """update all repositories"""
