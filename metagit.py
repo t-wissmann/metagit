@@ -274,8 +274,12 @@ class GitSvnRepository(GitRepository):
 
 def CreateRepositoryConfig(path = '.', needs_origin = True):
     git = GitRepository(tilde_encode(path), {})
-    branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
-        stdout=subprocess.PIPE).rstrip('\n')
+    exit_code, branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
+        stdout=subprocess.PIPE, may_fail = True)
+    if exit_code != 0:
+        branch = 'master'
+    else:
+        branch = branch.rstrip('\n')
     if branch != 'master':
         git.config['branch'] = branch
     svn_url = git.detect_upstream_svn_url()
