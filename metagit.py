@@ -271,7 +271,7 @@ class Config:
     @staticmethod
     def filepath():
         home = os.environ['HOME']
-        config_dir = os.environ.get('XDG_CONFIG_DIR', os.path.join(home, '.config'))
+        config_dir = os.environ.get('XDG_CONFIG_HOME', os.path.join(home, '.config'))
         return os.path.join(config_dir, 'metagit', 'config.ini')
 
     def reload(self):
