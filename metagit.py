@@ -463,7 +463,12 @@ class Main:
             if o == '-n':
                 dry_run = True
         commit_new_config = not dry_run
-        g = CreateRepositoryConfig()
+        path = '.'
+        git_root = detect_git(path)
+        if git_root is None:
+            raise UserMessage('{} not part of a git repository'.format( \
+                os.path.abspath(path)))
+        g = CreateRepositoryConfig(git_root)
         filepath = self.c.filepath()
         new_conf = configparser.ConfigParser()
         new_conf[g.tilde_path] = g.config
