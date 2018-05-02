@@ -186,6 +186,9 @@ class GitRepository:
     def upstream_branch(self):
         return '@{u}'
 
+    def __str__(self):
+        return self.tilde_path
+
     def status(self):
         p = self.path
         if not os.path.isdir(p):
@@ -279,6 +282,10 @@ class Config:
         else:
             print("no config found")
 
+    def save(self):
+        with (open(self.filepath(), 'w')) as filehandle:
+            self.config.write(filehandle)
+
     def build_repo_objects(self):
         self.repo_objects = {}
         for path in self.config.sections():
@@ -321,6 +328,7 @@ class Main:
                 'n': 'dry run: only print config',
             },
         }
+        Main.add.args_name = 'GITURL'
         self.c = Config()
         try:
             self.c.reload()
@@ -368,7 +376,10 @@ class Main:
             return 1
 
     def cmd_help(self, name, method, cmd_opts, file=sys.stdout):
-        print("Usage: {} {} [ARGS]".format(sys.argv[0], name), file=file)
+        print("Usage: {} {} {}".format( \
+            sys.argv[0], \
+            name, \
+            getattr(method, 'args_name', '[ARGS]'), file=file))
         print("", file=file)
         print(method.__doc__, file=file)
         print("", file=file)
@@ -471,6 +482,7 @@ class Main:
                 config_repo = GitRepository(git_path, {})
                 msg = 'Add git ' + g.name
                 config_repo.call('commit', '-m', msg, '--', filepath)
+
 
     def clone(self, argv, options):
         """clone non-existend repositories"""
