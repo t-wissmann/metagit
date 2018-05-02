@@ -5,6 +5,7 @@ import re
 import configparser
 import subprocess
 import getopt
+import shutil
 
 class UserMessage(Exception):
     def __init__(self, msg, repo=None):
@@ -133,6 +134,13 @@ class GitRepository:
         self.config = config # dict of settings
         self.name = os.path.basename(self.path)
 
+    def fingerprint(self):
+        # get the core config options
+        # if the fingerprint of two repos match, then it is likely
+        # that they are the same repository
+        return tuple(map(lambda a: self.config.get(a, None), \
+                ('type', 'branch', 'origin')))
+
     def call(self, *args, stdout=None, stderr=subprocess.PIPE, may_fail=False):
         git_cmd = [
             'git',
@@ -185,6 +193,29 @@ class GitRepository:
 
     def upstream_branch(self):
         return '@{u}'
+
+    def detect_upstream_svn_url(self):
+        exit_code,svn_remote_url = self.call('config', \
+                'svn-remote.svn.url', \
+                stdout=subprocess.PIPE, may_fail=True)
+        if exit_code == 0:
+            # detecting a svn remote
+            return svn_remote_url.rstrip('\n')
+        else:
+            return None
+
+    def detect_upstream_url(self, branch = None):
+        if branch is None:
+            branch = self.main_branch()
+        exit_code,remote_name = self.call('config', 'branch.{}.remote'.format(branch),\
+                stdout=subprocess.PIPE, may_fail = True)
+        if exit_code != 0:
+            return None
+        exit_code,url = self.call('remote', 'get-url', remote_name.rstrip('\n'),\
+                stdout=subprocess.PIPE, may_fail = True)
+        if exit_code != 0:
+            return None
+        return url.rstrip('\n')
 
     def __str__(self):
         return self.tilde_path
@@ -241,27 +272,52 @@ class GitSvnRepository(GitRepository):
         self.call('svn', 'clone', origin, self.path, stderr=None)
 
 
-def CreateRepositoryConfig(path = '.'):
-    path = detect_git(path)
+def CreateRepositoryConfig(path = '.', needs_origin = True):
     git = GitRepository(tilde_encode(path), {})
     branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
         stdout=subprocess.PIPE).rstrip('\n')
     if branch != 'master':
         git.config['branch'] = branch
-    exit_code,svn_remote_url = git.call('config', \
-            'svn-remote.svn.url', \
-            stdout=subprocess.PIPE, may_fail=True)
-    if exit_code == 0:
-        # detecting a svn remote
-        git.config['origin'] = svn_remote_url.rstrip('\n')
+    svn_url = git.detect_upstream_svn_url()
+    if not svn_url is None:
+        git.config['origin'] = svn_url
         git.config['type'] = 'git-svn'
     else:
         # ordinary git
-        remote_name = git.call('config', 'branch.{}.remote'.format(branch),\
-                stdout=subprocess.PIPE).rstrip('\n')
-        git.config['origin'] = git.call('remote', 'get-url', remote_name,\
-                stdout=subprocess.PIPE).rstrip('\n')
+        url = git.detect_upstream_url()
+        if needs_origin and url is None:
+            raise UserMessage('Could not detect an upstream url')
+        git.config['origin'] = url
     return git
+
+def locate_git_repositories():
+    cmd = ['locate', '-0', '-b', '\\.git' ]
+    proc = subprocess.Popen(cmd,
+                            stdout=subprocess.PIPE)
+    stdout, _ = proc.communicate()
+    status = proc.wait()
+    if status != 0:
+        return []
+    res = []
+    for l in stdout.decode().split('\0'):
+        head, tail = os.path.split(l)
+        if tail != '.git':
+            continue
+        res.append(head)
+    return res
+
+def repositories_in_filesystem():
+    # return a dictionary of all git repos in the file system
+    if hasattr(repositories_in_filesystem, 'dict'):
+        return repositories_in_filesystem.dict
+    print("Searching for repositories in the entire file system...", file=sys.stderr)
+    located_repos = { }
+    for p in locate_git_repositories():
+        r = CreateRepositoryConfig(p, needs_origin = False)
+        fp = r.fingerprint()
+        located_repos[fp] = r
+    repositories_in_filesystem.dict = located_repos
+    return repositories_in_filesystem.dict
 
 class Config:
     def __init__(self):
@@ -320,9 +376,6 @@ class Main:
         self.opts_dict = {
             Main.fetch: {
                 'c': 'clone repository if it does not exist locally',
-            },
-            Main.clone: {
-                'i': 'ask before cloning',
             },
             Main.add: {
                 'n': 'dry run: only print config',
@@ -488,20 +541,26 @@ class Main:
                 msg = 'Add git ' + g.name
                 config_repo.call('commit', '-m', msg, '--', filepath)
 
+    def clone(self, argv):
+        """clone non-existing repositories
 
-    def clone(self, argv, options):
-        """clone non-existend repositories"""
+If a non-existing repository can be found in the filesystem already (using
+locate), then the directory is simply moved (after confirmation).
+"""
         repos = self.c.repo_objects
-        interactive = False
-        for o,a in options:
-            if o == '-i':
-                interactive = True
 
         for p,r in repos.items():
             if r.exists():
                 print("{} exists".format(r.tilde_path))
             else:
-                if not interactive or ask('Clone {}?'.format(p)):
+                print("{} does not exist".format(r.tilde_path))
+                all_repos = repositories_in_filesystem()
+                loc_r = all_repos.get(r.fingerprint(), None)
+                if not loc_r is None and ask('Move {} to {}?'.format(loc_r.tilde_path, p)):
+                    parent = os.path.dirname(r.path.rstrip('/'))
+                    os.makedirs(parent, exist_ok = True)
+                    shutil.move(loc_r.path, r.path)
+                elif ask('Clone {}?'.format(p)):
                     r.clone()
 
     def fetch(self, argv, options=[]):
