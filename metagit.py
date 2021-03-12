@@ -574,8 +574,12 @@ locate), then the directory is simply moved (after confirmation).
             if o == '-c':
                 clone_if_necessary = True
         repos = self.c.repo_objects
-        for p,r in repos.items():
+        total = len(repos)
+        idx = 0
+        for p, r in repos.items():
+            idx += 1
             if r.exists():
+                print(f"({idx}/{total}) Fetching {r.tilde_path}", file=sys.stderr)
                 r.fetch()
             else:
                 if clone_if_necessary:
