@@ -362,6 +362,7 @@ class Config:
                 raise UserMessage('Error in section {}: unknown type \'{}\''\
                     .format(path, repo_type))
 
+
 class Main:
     def __init__(self, argv):
         self.global_opts = {
@@ -619,5 +620,7 @@ locate), then the directory is simply moved (after confirmation).
             ])
         pretty_print_table(table)
 
-Main(sys.argv)
+
+if __name__ == '__main__':
+    Main(sys.argv)
 
