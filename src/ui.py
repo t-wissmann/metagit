@@ -25,6 +25,14 @@ fetch and P to push the selected repository, and q to quit.
 def _ui_main(stdscr, rows):
     import curses
     curses.curs_set(0)
+    # use the terminal's default background (transparent) instead of black
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, -1, -1)
+        stdscr.bkgd(' ', curses.color_pair(1))
+    except curses.error:
+        pass
     header = ["repository", "", "uncommited", "push needed", "merge needed"]
     footer = "j/↓: down  k/↑: up  f: fetch  P: push  r: refresh  q: quit"
     sel = 0
