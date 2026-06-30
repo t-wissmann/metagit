@@ -32,6 +32,15 @@ def ask(question, default = None):
         return answer[0].lower() == 'y'
 
 
+def countshow(cnt, suffix = None, suffix1 = None):
+    if cnt == 0:
+        return ""
+    elif cnt == 1:
+        return str(cnt) + ('' if suffix1 is None else ' ' + suffix1)
+    else:
+        return str(cnt) + ('' if suffix is None else ' ' + suffix)
+
+
 def pretty_print_table(rows):
     """pretty print a table, given as a list of lists
     The first row is interpreted as the header
@@ -179,6 +188,10 @@ class GitRepository:
             # fetch
             self.call('fetch')
 
+    def push(self):
+        if self.exists():
+            self.call('push', stderr=None)
+
     def clone(self):
         if self.exists():
             return # nothing to do
@@ -258,6 +271,10 @@ class GitSvnRepository(GitRepository):
         if self.exists():
             # fetch
             self.call('svn', 'fetch')
+
+    def push(self):
+        if self.exists():
+            self.call('svn', 'dcommit', stderr=None)
 
     def clone(self):
         if self.exists():
@@ -374,6 +391,7 @@ class Main:
             'clone': (Main.clone, None),
             'st': (Main.status, None),
             'status': (Main.status, None),
+            'ui': (Main.ui, None),
             'fetch': (Main.fetch, lambda sub: sub.add_argument(
                 '-c', '--clone', action='store_true',
                 help='clone repository if it does not exist locally')),
@@ -493,6 +511,25 @@ locate), then the directory is simply moved (after confirmation).
                 else:
                     print("{} does not exist".format(r.tilde_path))
 
+    @staticmethod
+    def repo_status_cells(r, separator='\n'):
+        """compute the status cells for a single repository
+
+The columns match the header used by the 'st' command:
+name, presence, uncommited changes, push needed, merge needed.
+"""
+        rs = r.status()
+        return [
+            r.name,
+            "not present" if not rs.exists else "",
+            separator.join(filter(lambda x: x != '', [
+                countshow(rs.untracked_files, "new files", "new file"),
+                countshow(rs.uncommited_changes, "changes", "change"),
+            ])),
+            countshow(rs.unpushed_commits, "commits", "commit"),
+            countshow(rs.unmerged_commits, "commits", "commit"),
+        ]
+
     def status(self, argv):
         """list the status for the managed repositories"""
         repos = self.c.repo_objects
@@ -504,26 +541,108 @@ locate), then the directory is simply moved (after confirmation).
               "merge\nneeded",
             ]
         ]
-        def countshow(cnt, suffix = None, suffix1 = None):
-            if cnt == 0:
-                return ""
-            elif cnt == 1:
-                return str(cnt) + ('' if suffix1 is None else ' ' + suffix1)
-            else:
-                return str(cnt) + ('' if suffix is None else ' ' + suffix)
         for p,r in repos.items():
-            rs = r.status()
-            table.append([
-                r.name,
-                "not present" if not rs.exists else "",
-                '\n'.join(filter(lambda x: x != '', [
-                    countshow(rs.untracked_files, "new files", "new file"),
-                    countshow(rs.uncommited_changes, "changes", "change"),
-                ])),
-                countshow(rs.unpushed_commits, "commits", "commit"),
-                countshow(rs.unmerged_commits, "commits", "commit"),
-            ])
+            table.append(Main.repo_status_cells(r))
         pretty_print_table(table)
+
+    def ui(self, argv):
+        """interactive ncurses UI showing the repository status
+
+Navigate the scrollable table with j/k (or the arrow keys). Press f to
+fetch and P to push the selected repository, and q to quit.
+"""
+        import locale
+        locale.setlocale(locale.LC_ALL, '')
+        try:
+            import curses
+        except ImportError:
+            raise UserMessage("curses is not available on this platform")
+        repos = self.c.repo_objects
+        if not repos:
+            raise UserMessage("No repositories are configured")
+        rows = []
+        for p, r in repos.items():
+            rows.append({'repo': r, 'cells': Main.repo_status_cells(r, ', ')})
+        curses.wrapper(self._ui_main, rows)
+
+    def _ui_main(self, stdscr, rows):
+        import curses
+        curses.curs_set(0)
+        header = ["repository", "", "uncommited", "push needed", "merge needed"]
+        footer = "j/↓: down  k/↑: up  f: fetch  P: push  q: quit"
+        sel = 0
+        top = 0
+        while True:
+            h, w = stdscr.getmaxyx()
+            width = max(1, w - 1)
+            # determine the column widths from the header and every cell
+            widths = [len(c) for c in header]
+            for row in rows:
+                for i, c in enumerate(row['cells']):
+                    if i < len(widths):
+                        widths[i] = max(widths[i], len(c))
+            def fmt(cells):
+                parts = []
+                for i in range(len(widths)):
+                    c = cells[i] if i < len(cells) else ""
+                    parts.append(('{:' + str(widths[i]) + 's}').format(c))
+                return '  '.join(parts)
+            body_top = 2
+            body_height = max(1, h - body_top - 1)
+            # keep the selected row within the visible window
+            if sel < top:
+                top = sel
+            elif sel >= top + body_height:
+                top = sel - body_height + 1
+            stdscr.erase()
+            # fixed table head
+            stdscr.addnstr(0, 0, fmt(header), width, curses.A_BOLD)
+            stdscr.addnstr(1, 0, '─' * width, width)
+            # scrollable body
+            for idx in range(body_height):
+                ri = top + idx
+                if ri >= len(rows):
+                    break
+                line = fmt(rows[ri]['cells']).ljust(width)
+                attr = curses.A_REVERSE if ri == sel else curses.A_NORMAL
+                stdscr.addnstr(body_top + idx, 0, line, width, attr)
+            # key bindings at the bottom of the screen
+            stdscr.addnstr(h - 1, 0, footer, width, curses.A_BOLD)
+            stdscr.refresh()
+            ch = stdscr.getch()
+            if ch in (ord('q'), 27):
+                break
+            elif ch in (ord('j'), curses.KEY_DOWN):
+                sel = min(sel + 1, len(rows) - 1)
+            elif ch in (ord('k'), curses.KEY_UP):
+                sel = max(sel - 1, 0)
+            elif ch == ord('f'):
+                self._ui_action(stdscr, rows, sel, 'fetch')
+            elif ch == ord('P'):
+                self._ui_action(stdscr, rows, sel, 'push')
+
+    def _ui_action(self, stdscr, rows, sel, action):
+        import curses
+        r = rows[sel]['repo']
+        # leave curses mode so the git output appears on the normal terminal
+        curses.endwin()
+        try:
+            if action == 'fetch':
+                print("Fetching {} ...".format(r.tilde_path))
+                r.fetch()
+            elif action == 'push':
+                print("Pushing {} ...".format(r.tilde_path))
+                r.push()
+        except UserMessage as e:
+            print("Error: {}".format(e))
+        try:
+            input("Press enter to continue...")
+        except (EOFError, KeyboardInterrupt):
+            pass
+        # refresh the status of the affected repository
+        rows[sel]['cells'] = Main.repo_status_cells(r, ', ')
+        stdscr.clear()
+        stdscr.refresh()
 
 Main()
 
