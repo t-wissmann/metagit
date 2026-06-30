@@ -363,7 +363,7 @@ class Config:
                     .format(path, repo_type))
 
 class Main:
-    def __init__(self, argv):
+    def __init__(self):
         # maps a command name to a tuple (callback, add_arguments), where
         # add_arguments is an optional callable registering command specific
         # arguments on the command's subparser (or None for none)
@@ -386,7 +386,7 @@ class Main:
                 .format(self.c.filepath(), e))
             sys.exit(1)
         self.parser = self.build_parser()
-        parsed = self.parser.parse_args(argv[1:])
+        parsed = self.parser.parse_args()
         if parsed.verbose:
             global debug_messages
             debug_messages = True
@@ -409,7 +409,6 @@ class Main:
         global_parser.add_argument('-v', '--verbose', action='store_true',
                                    help='activate verbose output')
         parser = argparse.ArgumentParser(
-            prog=os.path.basename(sys.argv[0]),
             parents=[global_parser],
             description='Manage a collection of git repositories.')
         subparsers = parser.add_subparsers(dest='command', metavar='SUBCMD')
@@ -526,5 +525,5 @@ locate), then the directory is simply moved (after confirmation).
             ])
         pretty_print_table(table)
 
-Main(sys.argv)
+Main()
 
