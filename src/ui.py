@@ -26,7 +26,7 @@ def _ui_main(stdscr, rows):
     import curses
     curses.curs_set(0)
     header = ["repository", "", "uncommited", "push needed", "merge needed"]
-    footer = "j/↓: down  k/↑: up  f: fetch  P: push  q: quit"
+    footer = "j/↓: down  k/↑: up  f: fetch  P: push  r: refresh  q: quit"
     sel = 0
     top = 0
     while True:
@@ -77,6 +77,10 @@ def _ui_main(stdscr, rows):
             _ui_action(stdscr, rows, sel, 'fetch')
         elif ch == ord('P'):
             _ui_action(stdscr, rows, sel, 'push')
+        elif ch == ord('r'):
+            # recompute the status of every repository
+            for row in rows:
+                row['cells'] = repo_status_cells(row['repo'], ', ')
 
 
 def _ui_action(stdscr, rows, sel, action):
