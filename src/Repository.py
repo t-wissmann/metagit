@@ -7,7 +7,7 @@ object that loads them from the metagit config file.
 import os
 import sys
 import subprocess
-import configparser
+import yaml
 
 from .utils import UserMessage, debug, warning, tilde_encode
 
@@ -48,7 +48,7 @@ class GitRepository:
         # if the fingerprint of two repos match, then it is likely
         # that they are the same repository
         return tuple(map(lambda a: self.config.get(a, None), \
-                ('type', 'branch', 'origin')))
+                ('type', 'branch', 'url')))
 
     def call(self, *args, stdout=None, stderr=subprocess.PIPE, may_fail=False):
         git_cmd = [
@@ -95,9 +95,9 @@ class GitRepository:
     def clone(self):
         if self.exists():
             return # nothing to do
-        if not 'origin' in self.config:
-            raise UserMessage('Can not run \'git clone\', because origin is unset.', self)
-        origin = self.config['origin']
+        if not 'url' in self.config:
+            raise UserMessage('Can not run \'git clone\', because url is unset.', self)
+        origin = self.config['url']
         branch = self.main_branch()
         self.call('clone', '-b', branch, origin, self.path, stderr=None)
 
@@ -180,10 +180,10 @@ class GitSvnRepository(GitRepository):
     def clone(self):
         if self.exists():
             return # nothing to do
-        if not 'origin' in self.config:
+        if not 'url' in self.config:
             raise UserMessage('Can not run \'git svn clone\', ' \
-                              + 'because origin is unset.', self)
-        origin = self.config['origin']
+                              + 'because url is unset.', self)
+        origin = self.config['url']
         branch = self.main_branch()
         if branch != 'master':
             raise UserMessage('\'git svn clone\' only works for branch master.', self)
@@ -202,14 +202,14 @@ def CreateRepositoryConfig(path = '.', needs_origin = True):
         git.config['branch'] = branch
     svn_url = git.detect_upstream_svn_url()
     if not svn_url is None:
-        git.config['origin'] = svn_url
+        git.config['url'] = svn_url
         git.config['type'] = 'git-svn'
     else:
         # ordinary git
         url = git.detect_upstream_url()
         if needs_origin and url is None:
             raise UserMessage('Could not detect an upstream url')
-        git.config['origin'] = url
+        git.config['url'] = url
     return git
 
 
@@ -244,41 +244,77 @@ def repositories_in_filesystem():
     return repositories_in_filesystem.dict
 
 
+def repo_entry_to_config(path, entry):
+    """normalize a single 'repositories' entry into a settings dict
+
+A bare string is shorthand for the upstream url; a mapping is taken verbatim
+(keys such as 'url', 'branch' and 'type').
+"""
+    if isinstance(entry, str):
+        return {'url': entry}
+    elif isinstance(entry, dict):
+        return dict(entry)
+    else:
+        raise UserMessage('Error in entry {}: expected a url string or a '
+                          'mapping, got {}'.format(path, type(entry).__name__))
+
+
+def config_to_repo_entry(config):
+    """render a settings dict back into its compact 'repositories' entry
+
+Collapses to a plain url string when no other options are set.
+"""
+    if set(config.keys()) == {'url'}:
+        return config['url']
+    return dict(config)
+
+
 class Config:
     def __init__(self):
-        self.config = configparser.ConfigParser()
+        self.data = {}
         self.repo_objects = {}
 
     @staticmethod
     def filepath():
         home = os.environ['HOME']
         config_dir = os.environ.get('XDG_CONFIG_HOME', os.path.join(home, '.config'))
-        return os.path.join(config_dir, 'metagit', 'config.ini')
+        return os.path.join(config_dir, 'metagit', 'config.yaml')
 
     def reload(self):
         configfile = Config.filepath()
         if os.path.isfile(configfile):
-            self.config.read(configfile)
+            with open(configfile) as filehandle:
+                self.data = yaml.safe_load(filehandle) or {}
+            if not isinstance(self.data, dict):
+                raise UserMessage('Config must be a mapping at the top level')
             self.build_repo_objects()
         else:
             print("no config found")
 
+    def repositories(self):
+        """the (mutable) mapping of repository path to its config entry"""
+        repos = self.data.get('repositories')
+        if repos is None:
+            repos = {}
+            self.data['repositories'] = repos
+        return repos
+
     def save(self):
-        with (open(self.filepath(), 'w')) as filehandle:
-            self.config.write(filehandle)
+        with open(self.filepath(), 'w') as filehandle:
+            yaml.safe_dump(self.data, filehandle,
+                           sort_keys=False, default_flow_style=False)
 
     def build_repo_objects(self):
         self.repo_objects = {}
-        for path in self.config.sections():
-            repo_type = self.config[path].get('type', 'git')
-            obj = None
-            classes = {
-                'git': GitRepository,
-                'git-svn': GitSvnRepository,
-            }
+        classes = {
+            'git': GitRepository,
+            'git-svn': GitSvnRepository,
+        }
+        for path, entry in self.repositories().items():
+            config = repo_entry_to_config(path, entry)
+            repo_type = config.get('type', 'git')
             if repo_type in classes:
-                self.repo_objects[path] = \
-                    classes[repo_type](path, self.config[path])
+                self.repo_objects[path] = classes[repo_type](path, config)
             else:
-                raise UserMessage('Error in section {}: unknown type \'{}\''\
+                raise UserMessage('Error in entry {}: unknown type \'{}\''\
                     .format(path, repo_type))

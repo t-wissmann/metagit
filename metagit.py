@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import os
 import sys
-import configparser
 import argparse
 import shutil
+import yaml
 
 from src import utils
 from src.utils import (
@@ -17,6 +17,7 @@ from src.Repository import (
     Config,
     GitRepository,
     CreateRepositoryConfig,
+    config_to_repo_entry,
     repositories_in_filesystem,
 )
 from src.ui import run_ui
@@ -88,7 +89,6 @@ class Main:
     def add(self, argv):
         """add a new repository"""
         dry_run = argv.dry_run
-        commit_new_config = not dry_run
         path = '.'
         git_root = detect_git(path)
         if git_root is None:
@@ -96,23 +96,26 @@ class Main:
                 os.path.abspath(path)))
         g = CreateRepositoryConfig(git_root)
         filepath = self.c.filepath()
-        new_conf = configparser.ConfigParser()
-        new_conf[g.tilde_path] = g.config
-        with (sys.stdout if dry_run else open(filepath, 'a')) as filehandle:
-            new_conf.write(filehandle)
+        entry = config_to_repo_entry(g.config)
+        if dry_run:
+            yaml.safe_dump({'repositories': {g.tilde_path: entry}},
+                           sys.stdout, sort_keys=False, default_flow_style=False)
+            return
+        # add the new repository and write the whole config file back
+        self.c.repositories()[g.tilde_path] = entry
+        self.c.save()
         if os.path.islink(filepath):
             filepath = os.readlink(filepath)
-        if commit_new_config:
-            # detect the git repository handling the config
-            git_path = detect_git(os.path.dirname(filepath))
-            if git_path is None:
-                print("Config file {} not managed in a git, not committing anything"\
-                        .format(filepath))
-            else:
-                print("Committing changes to the git at {}".format(git_path))
-                config_repo = GitRepository(git_path, {})
-                msg = 'Add git ' + g.name
-                config_repo.call('commit', '-m', msg, '--', filepath)
+        # detect the git repository handling the config
+        git_path = detect_git(os.path.dirname(filepath))
+        if git_path is None:
+            print("Config file {} not managed in a git, not committing anything"\
+                    .format(filepath))
+        else:
+            print("Committing changes to the git at {}".format(git_path))
+            config_repo = GitRepository(git_path, {})
+            msg = 'Add git ' + g.name
+            config_repo.call('commit', '-m', msg, '--', filepath)
 
     def clone(self, argv):
         """clone non-existing repositories

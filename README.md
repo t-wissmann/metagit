@@ -12,7 +12,22 @@ The main purposes of metagit are:
     offline for some time)
 
 ## Installation
-The only dependencies are git and the python 3 standard libraries.
+The dependencies are git, the python 3 standard libraries and
+[PyYAML](https://pyyaml.org/) (for reading the config file).
+
+## Configuration
+metagit reads `$XDG_CONFIG_HOME/metagit/config.yaml` (defaulting to
+`~/.config/metagit/config.yaml`). Each entry under `repositories` maps a
+repository path to either its upstream url, or a mapping with the keys `url`,
+`branch` (defaults to `master`) and `type` (`git` or `git-svn`):
+
+```yaml
+repositories:
+  ~/git/metagit: git@github.com:t-wissmann/metagit
+  ~/git/herbstluftwm:
+    url: git@github.com:herbstluftwm/herbstluftwm
+    branch: winterbreeze
+```
 
 ## Credits
 The main inspiration is https://github.com/stettberger/metagit
