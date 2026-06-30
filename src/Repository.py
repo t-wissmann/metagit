@@ -98,11 +98,37 @@ class GitRepository:
         if not 'url' in self.config:
             raise UserMessage('Can not run \'git clone\', because url is unset.', self)
         origin = self.config['url']
-        branch = self.main_branch()
-        self.call('clone', '-b', branch, origin, self.path, stderr=None)
+        args = ['clone']
+        if 'branch' in self.config:
+            # honour an explicit override; otherwise let git check out
+            # whatever the remote advertises as its default branch
+            args += ['-b', self.config['branch']]
+        args += [origin, self.path]
+        self.call(*args, stderr=None)
 
     def main_branch(self):
-        return self.config.get('branch', 'master')
+        if 'branch' in self.config:
+            return self.config['branch']
+        if not hasattr(self, '_detected_main_branch'):
+            self._detected_main_branch = self.detect_main_branch()
+        return self._detected_main_branch
+
+    def detect_main_branch(self):
+        """detect a repository's default branch.
+
+        Used as the fallback when no explicit 'branch' is configured. For an
+        existing checkout we read the remote's advertised default branch
+        (origin/HEAD, as set up by 'git clone'); when that is unavailable we
+        fall back to 'master'.
+        """
+        if self.exists():
+            exit_code, head = self.call('symbolic-ref', '--short', \
+                'refs/remotes/origin/HEAD', \
+                stdout=subprocess.PIPE, may_fail=True)
+            if exit_code == 0:
+                # e.g. 'origin/main' -> 'main'
+                return head.rstrip('\n').split('/', 1)[-1]
+        return 'master'
 
     def upstream_branch(self):
         return '@{u}'
@@ -194,12 +220,12 @@ def CreateRepositoryConfig(path = '.', needs_origin = True):
     git = GitRepository(tilde_encode(path), {})
     exit_code, branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
         stdout=subprocess.PIPE, may_fail = True)
-    if exit_code != 0:
-        branch = 'master'
-    else:
+    if exit_code == 0:
         branch = branch.rstrip('\n')
-    if branch != 'master':
-        git.config['branch'] = branch
+        # only record the branch when it deviates from the repository's
+        # auto-detected default, so we don't pin e.g. 'main' needlessly
+        if branch != git.detect_main_branch():
+            git.config['branch'] = branch
     svn_url = git.detect_upstream_svn_url()
     if not svn_url is None:
         git.config['url'] = svn_url

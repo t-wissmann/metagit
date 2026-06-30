@@ -19,7 +19,8 @@ The dependencies are git, the python 3 standard libraries and
 metagit reads `$XDG_CONFIG_HOME/metagit/config.yaml` (defaulting to
 `~/.config/metagit/config.yaml`). Each entry under `repositories` maps a
 repository path to either its upstream url, or a mapping with the keys `url`,
-`branch` (defaults to `master`) and `type` (`git` or `git-svn`):
+`branch` (defaults to the repository's auto-detected main branch) and `type`
+(`git` or `git-svn`):
 
 ```yaml
 repositories:
