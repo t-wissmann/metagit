@@ -96,7 +96,7 @@ class GitRepository:
         if self.exists():
             return # nothing to do
         if not 'origin' in self.config:
-            raise RepoMessage(self, 'Can not run \'git clone\', because origin is unset.')
+            raise UserMessage('Can not run \'git clone\', because origin is unset.', self)
         origin = self.config['origin']
         branch = self.main_branch()
         self.call('clone', '-b', branch, origin, self.path, stderr=None)
@@ -181,12 +181,12 @@ class GitSvnRepository(GitRepository):
         if self.exists():
             return # nothing to do
         if not 'origin' in self.config:
-            raise RepoMessage(self, 'Can not run \'git svn clone\', ' \
-                                    + 'because origin is unset.')
+            raise UserMessage('Can not run \'git svn clone\', ' \
+                              + 'because origin is unset.', self)
         origin = self.config['origin']
         branch = self.main_branch()
         if branch != 'master':
-            raise RepoMessage(self, '\'git svn clone\' only works for branch master.')
+            raise UserMessage('\'git svn clone\' only works for branch master.', self)
         self.call('svn', 'clone', origin, self.path, stderr=None)
 
 
