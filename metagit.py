@@ -115,7 +115,7 @@ class Main:
             print("Committing changes to the git at {}".format(git_path))
             config_repo = GitRepository(git_path, {})
             msg = 'Add git ' + g.name
-            config_repo.call('commit', '-m', msg, '--', filepath)
+            config_repo.call('git', 'commit', '-m', msg, '--', filepath)
 
     def clone(self, argv):
         """clone non-existing repositories

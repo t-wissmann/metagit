@@ -107,27 +107,19 @@ def _display_cells(row, tick):
     return cells
 
 
-def _command_tokens(command):
-    """the git arguments of a 'git ...' command line.
+def _run_repo_command(repo, command, live=False):
+    """run a user command in a repository, skipping repos that do not exist.
 
-    The leading 'git' is dropped, since the command is run through the
-    repository's own git invocation (which supplies --work-tree/--git-dir).
+    `command` is a full command line (e.g. 'git fetch') run through the shell
+    with the repository as the working directory.
     """
-    tokens = command.split()
-    if tokens and tokens[0] == 'git':
-        tokens = tokens[1:]
-    return tokens
-
-
-def _run_repo_command(repo, tokens, live=False):
-    """run a git command on a repository, skipping repos that do not exist."""
     if not repo.exists():
         return
     if live:
-        # let git write straight to the terminal (foreground command)
-        repo.call(*tokens, stderr=None)
+        # let the command write straight to the terminal (foreground command)
+        repo.call(command, shell=True, stderr=None)
     else:
-        repo.call(*tokens, quiet=True)
+        repo.call(command, shell=True, quiet=True)
 
 
 # --- actions ---------------------------------------------------------------
@@ -174,9 +166,8 @@ def _action_run_bg(state, arg):
     if not state.rows:
         return
     row = state.rows[state.sel]
-    tokens = _command_tokens(arg)
     _start_background(row, arg,
-                      lambda repo=row['repo']: _run_repo_command(repo, tokens))
+                      lambda repo=row['repo']: _run_repo_command(repo, arg))
 
 
 def _action_run_fg(state, arg):
@@ -185,12 +176,11 @@ def _action_run_fg(state, arg):
     import curses
     row = state.rows[state.sel]
     repo = row['repo']
-    tokens = _command_tokens(arg)
     # leave curses mode so the git output appears on the normal terminal
     curses.endwin()
     try:
         print("Running {} in {} ...".format(arg, repo.tilde_path))
-        _run_repo_command(repo, tokens, live=True)
+        _run_repo_command(repo, arg, live=True)
     except UserMessage as e:
         print("Error: {}".format(e))
     try:

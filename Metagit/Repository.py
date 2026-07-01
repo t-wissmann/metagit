@@ -83,21 +83,23 @@ class GitRepository:
                 ('type', 'branch', 'url')))
 
     def call(self, *args, stdout=None, stderr=subprocess.PIPE, may_fail=False,
-             quiet=False):
-        git_cmd = [
-            'git',
-        ]
-        if args[0] != 'clone' and args[0:2] != ('svn','clone'):
-            # passing these options to clone will make
-            # the repo lack the .git dir
-            git_cmd += [
-                '--work-tree=' + self.path,
-                '--git-dir=' + os.path.join(self.path, '.git'),
-            ]
-        git_cmd += list(args)
-        debug('calling', ' '.join(git_cmd))
-        proc = subprocess.Popen(git_cmd, stdout = stdout, \
-                                stderr = stderr)
+             quiet=False, shell=False):
+        """run a command with the repository as the working directory.
+
+        With shell=False (the default) `args` is the full argument list of a
+        command (e.g. 'git', 'fetch'). With shell=True a single command string
+        is run through the shell, which is convenient for user-provided
+        commands. Either way it runs inside the repository, so git picks up the
+        working tree on its own. When the directory does not exist yet (e.g.
+        'git clone', which creates it and is given an explicit destination) the
+        command runs from the current working directory instead.
+        """
+        cmd = args[0] if shell else list(args)
+        cmd_str = cmd if shell else ' '.join(cmd)
+        cwd = self.path if os.path.isdir(self.path) else None
+        debug('calling', cmd_str, 'in', cwd if cwd else '.')
+        proc = subprocess.Popen(cmd, stdout = stdout, \
+                                stderr = stderr, cwd = cwd, shell = shell)
         out,err = proc.communicate()
         if not out is None:
             out = out.decode()
@@ -107,7 +109,7 @@ class GitRepository:
         if exit_code != 0:
             err_str = "" if err is None else err.decode().rstrip('\n')
             raise UserMessage('Command »{}« failed with exit code {}: »{}«'.format(\
-                ' '.join(git_cmd), exit_code, err_str))
+                cmd_str, exit_code, err_str))
         else:
             if not err is None and not quiet:
                 print(err.decode(), end='', file=sys.stderr)
@@ -119,11 +121,11 @@ class GitRepository:
     def fetch(self, quiet=False):
         if self.exists():
             # fetch
-            self.call('fetch', quiet=quiet)
+            self.call('git', 'fetch', quiet=quiet)
 
     def push(self):
         if self.exists():
-            self.call('push', stderr=None)
+            self.call('git', 'push', stderr=None)
 
     def clone(self):
         if self.exists():
@@ -137,7 +139,7 @@ class GitRepository:
             # whatever the remote advertises as its default branch
             args += ['-b', self.config['branch']]
         args += [origin, self.path]
-        self.call(*args, stderr=None)
+        self.call('git', *args, stderr=None)
 
     def main_branch(self):
         if 'branch' in self.config:
@@ -155,7 +157,7 @@ class GitRepository:
         fall back to 'master'.
         """
         if self.exists():
-            exit_code, head = self.call('symbolic-ref', '--short', \
+            exit_code, head = self.call('git', 'symbolic-ref', '--short', \
                 'refs/remotes/origin/HEAD', \
                 stdout=subprocess.PIPE, may_fail=True)
             if exit_code == 0:
@@ -167,7 +169,7 @@ class GitRepository:
         return '@{u}'
 
     def detect_upstream_svn_url(self):
-        exit_code,svn_remote_url = self.call('config', \
+        exit_code,svn_remote_url = self.call('git', 'config', \
                 'svn-remote.svn.url', \
                 stdout=subprocess.PIPE, may_fail=True)
         if exit_code == 0:
@@ -179,11 +181,13 @@ class GitRepository:
     def detect_upstream_url(self, branch = None):
         if branch is None:
             branch = self.main_branch()
-        exit_code,remote_name = self.call('config', 'branch.{}.remote'.format(branch),\
+        exit_code,remote_name = self.call('git', 'config', \
+                'branch.{}.remote'.format(branch),\
                 stdout=subprocess.PIPE, may_fail = True)
         if exit_code != 0:
             return None
-        exit_code,url = self.call('remote', 'get-url', remote_name.rstrip('\n'),\
+        exit_code,url = self.call('git', 'remote', 'get-url', \
+                remote_name.rstrip('\n'),\
                 stdout=subprocess.PIPE, may_fail = True)
         if exit_code != 0:
             return None
@@ -198,7 +202,7 @@ class GitRepository:
             return RepoStatus.nonExistent()
         else:
             rs = RepoStatus()
-            git_status_lines = self.call('status', '--porcelain=1', stdout=subprocess.PIPE).splitlines()
+            git_status_lines = self.call('git', 'status', '--porcelain=1', stdout=subprocess.PIPE).splitlines()
             for line in git_status_lines:
                 if line[0:2] == '??':
                     rs.untracked_files += 1
@@ -206,12 +210,12 @@ class GitRepository:
                     rs.uncommited_changes += 1
             try:
                 rs.unmerged_commits = len( \
-                    self.call('log', '--format=format:X', \
+                    self.call('git', 'log', '--format=format:X', \
                         self.main_branch() + '..' + self.upstream_branch(), \
                     stdout=subprocess.PIPE) \
                     .replace('\n', ''))
                 rs.unpushed_commits = len( \
-                    self.call('log', '--format=format:X', \
+                    self.call('git', 'log', '--format=format:X', \
                          self.upstream_branch() + '..' + self.main_branch(), \
                     stdout=subprocess.PIPE) \
                     .replace('\n', ''))
@@ -230,11 +234,11 @@ class GitSvnRepository(GitRepository):
     def fetch(self, quiet=False):
         if self.exists():
             # fetch
-            self.call('svn', 'fetch', quiet=quiet)
+            self.call('git', 'svn', 'fetch', quiet=quiet)
 
     def push(self):
         if self.exists():
-            self.call('svn', 'dcommit', stderr=None)
+            self.call('git', 'svn', 'dcommit', stderr=None)
 
     def clone(self):
         if self.exists():
@@ -246,12 +250,12 @@ class GitSvnRepository(GitRepository):
         branch = self.main_branch()
         if branch != 'master':
             raise UserMessage('\'git svn clone\' only works for branch master.', self)
-        self.call('svn', 'clone', origin, self.path, stderr=None)
+        self.call('git', 'svn', 'clone', origin, self.path, stderr=None)
 
 
 def CreateRepositoryConfig(path = '.', needs_origin = True):
     git = GitRepository(tilde_encode(path), {})
-    exit_code, branch = git.call('rev-parse', '--abbrev-ref', 'HEAD',\
+    exit_code, branch = git.call('git', 'rev-parse', '--abbrev-ref', 'HEAD',\
         stdout=subprocess.PIPE, may_fail = True)
     if exit_code == 0:
         branch = branch.rstrip('\n')
