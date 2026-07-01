@@ -175,7 +175,8 @@ locate), then the directory is simply moved (after confirmation).
         """interactive ncurses UI showing the repository status
 
 Navigate the scrollable table with j/k (or the arrow keys). Press f to
-fetch and P to push the selected repository, and q to quit.
+fetch (in the background) and P to push the selected repository, and q to
+quit.
 """
         run_ui(self.c.repo_objects)
 

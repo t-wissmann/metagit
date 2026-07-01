@@ -50,7 +50,8 @@ class GitRepository:
         return tuple(map(lambda a: self.config.get(a, None), \
                 ('type', 'branch', 'url')))
 
-    def call(self, *args, stdout=None, stderr=subprocess.PIPE, may_fail=False):
+    def call(self, *args, stdout=None, stderr=subprocess.PIPE, may_fail=False,
+             quiet=False):
         git_cmd = [
             'git',
         ]
@@ -76,17 +77,17 @@ class GitRepository:
             raise UserMessage('Command »{}« failed with exit code {}: »{}«'.format(\
                 ' '.join(git_cmd), exit_code, err_str))
         else:
-            if not err is None:
+            if not err is None and not quiet:
                 print(err.decode(), end='', file=sys.stderr)
         return out
 
     def exists(self):
         return os.path.isdir(self.path)
 
-    def fetch(self):
+    def fetch(self, quiet=False):
         if self.exists():
             # fetch
-            self.call('fetch')
+            self.call('fetch', quiet=quiet)
 
     def push(self):
         if self.exists():
@@ -194,10 +195,10 @@ class GitSvnRepository(GitRepository):
     def upstream_branch(self):
         return 'git-svn'
 
-    def fetch(self):
+    def fetch(self, quiet=False):
         if self.exists():
             # fetch
-            self.call('svn', 'fetch')
+            self.call('svn', 'fetch', quiet=quiet)
 
     def push(self):
         if self.exists():
