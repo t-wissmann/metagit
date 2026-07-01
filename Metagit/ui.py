@@ -18,7 +18,7 @@ from .utils import UserMessage, repo_status_cells
 _SPINNER = "|/—\\"
 
 
-def run_ui(repos, keys, run_fg_prompt_threshold=5):
+def run_ui(repos, keys, run_fg_prompt_threshold=5, documentation=None):
     """interactive ncurses UI showing the repository status
 
 Navigate the scrollable table and act on the selected repository with the
@@ -33,7 +33,7 @@ configured key bindings (see the 'keys' section of the config).
     rows = []
     for p, r in repos.items():
         rows.append({'repo': r, 'cells': repo_status_cells(r, ', '), 'bg': None})
-    curses.wrapper(_ui_main, rows, keys, run_fg_prompt_threshold)
+    curses.wrapper(_ui_main, rows, keys, run_fg_prompt_threshold, documentation)
 
 
 # --- background command handling ------------------------------------------
@@ -122,6 +122,29 @@ def _run_repo_command(repo, command, live=False):
         repo.call(command, shell=True, quiet=True)
 
 
+def page_text(text):
+    """pipe `text` through the user's $PAGER, falling back to stdout.
+
+    Used both by the CLI 'help' command and the interactive 'help' action.
+    """
+    import os
+    import sys
+    import subprocess
+    pager = os.environ.get('PAGER', 'less')
+    try:
+        proc = subprocess.Popen(pager, shell=True,
+                                stdin=subprocess.PIPE, text=True)
+    except OSError:
+        # no usable pager: fall back to writing straight to stdout
+        sys.stdout.write(text)
+        return
+    try:
+        proc.communicate(text)
+    except (BrokenPipeError, KeyboardInterrupt):
+        # the user quit the pager early
+        pass
+
+
 # --- actions ---------------------------------------------------------------
 #
 # Each action is a function (state, arg) -> None registered in _ACTIONS. `arg`
@@ -129,7 +152,8 @@ def _run_repo_command(repo, command, live=False):
 # command line).
 
 class _UIState:
-    def __init__(self, stdscr, rows, run_fg_prompt_threshold=5):
+    def __init__(self, stdscr, rows, run_fg_prompt_threshold=5,
+                 documentation=None):
         self.stdscr = stdscr
         self.rows = rows
         self.sel = 0
@@ -137,6 +161,9 @@ class _UIState:
         self.tick = 0
         self.running = True
         self.run_fg_prompt_threshold = run_fg_prompt_threshold
+        # callable returning the documentation string shown by the 'help'
+        # action (None disables it)
+        self.documentation = documentation
 
 
 def _action_down(state, arg):
@@ -199,6 +226,17 @@ def _action_run_fg(state, arg):
     state.stdscr.refresh()
 
 
+def _action_help(state, arg):
+    if state.documentation is None:
+        return
+    import curses
+    # leave curses mode so the pager gets the normal terminal
+    curses.endwin()
+    page_text(state.documentation())
+    state.stdscr.clear()
+    state.stdscr.refresh()
+
+
 _ACTIONS = {
     'down': _action_down,
     'up': _action_up,
@@ -206,7 +244,28 @@ _ACTIONS = {
     'refresh': _action_refresh,
     'run-bg': _action_run_bg,
     'run-fg': _action_run_fg,
+    'help': _action_help,
 }
+
+
+# human readable description for every action, keyed by its name. 'run-bg' and
+# 'run-fg' take the command line to run as their argument.
+_ACTION_DOCS = {
+    'down': 'move the selection down one repository',
+    'up': 'move the selection up one repository',
+    'quit': 'quit the interactive UI',
+    'refresh': 'recompute the status of every repository',
+    'run-bg': 'run the given command in the background for the selected '
+              'repository (e.g. "run-bg git fetch")',
+    'run-fg': 'run the given command in the foreground for the selected '
+              'repository, leaving the UI while it runs (e.g. "run-fg $SHELL")',
+    'help': 'show this documentation, paged through $PAGER',
+}
+
+
+def action_docs():
+    """the mapping of action name to a human readable description"""
+    return dict(_ACTION_DOCS)
 
 
 def _parse_action(spec):
@@ -256,7 +315,7 @@ def _build_keymap(keys, curses):
 
 # --- main loop -------------------------------------------------------------
 
-def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5):
+def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
     import curses
     curses.curs_set(0)
     # use the terminal's default background (transparent) instead of black
@@ -270,7 +329,7 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5):
     keymap = _build_keymap(keys, curses)
     header = ["repository", "", "uncommited", "push needed", "merge needed"]
     footer = '  '.join('{}: {}'.format(k, spec) for k, spec in keys.items())
-    state = _UIState(stdscr, rows, run_fg_prompt_threshold)
+    state = _UIState(stdscr, rows, run_fg_prompt_threshold, documentation)
     while state.running:
         _reap_background(rows)
         h, w = stdscr.getmaxyx()

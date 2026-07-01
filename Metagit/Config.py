@@ -30,6 +30,7 @@ DEFAULT_CONFIG = {
         'P': 'run-fg git push',
         'r': 'refresh',
         'q': 'quit',
+        '?': 'help',
         'Enter': 'run-fg $SHELL',
     },
 }
@@ -115,6 +116,62 @@ class Config:
             repos = {}
             self.data['repositories'] = repos
         return repos
+
+    def documentation(self):
+        """render the effective configuration as human readable documentation.
+
+        Describes the config file location and every setting, and lists both
+        the configured key bindings and the actions they may refer to.
+        """
+        # imported lazily to avoid a circular import (ui imports from utils
+        # only, but keeping the import here documents the dependency clearly)
+        from .ui import action_docs
+
+        lines = []
+        lines.append('metagit configuration')
+        lines.append('=====================')
+        lines.append('')
+        lines.append('Config file: {}'.format(self.filepath()))
+        if not os.path.isfile(self.filepath()):
+            lines.append('(the file does not exist yet; built-in defaults are '
+                         'shown below)')
+        lines.append('')
+
+        lines.append('Settings')
+        lines.append('--------')
+        lines.append('run-fg-prompt-threshold: {} seconds'
+                     .format(self.run_fg_prompt_threshold()))
+        lines.append('  A finished foreground (run-fg) command only prompts')
+        lines.append('  with "Press enter to continue..." when it ran for')
+        lines.append('  fewer than this many seconds.')
+        lines.append('')
+
+        repos = self.repositories()
+        lines.append('Managed repositories: {}'.format(len(repos)))
+        for path in repos:
+            lines.append('  - {}'.format(path))
+        lines.append('')
+
+        lines.append('Key bindings')
+        lines.append('------------')
+        keys = self.keys()
+        if keys:
+            width = max(len(str(k)) for k in keys)
+            for key, action in keys.items():
+                lines.append('  {:<{w}}  {}'.format(str(key), action, w=width))
+        else:
+            lines.append('  (none configured)')
+        lines.append('')
+
+        lines.append('Available actions')
+        lines.append('-----------------')
+        docs = action_docs()
+        width = max(len(name) for name in docs)
+        for name, doc in docs.items():
+            lines.append('  {:<{w}}  {}'.format(name, doc, w=width))
+        lines.append('')
+
+        return '\n'.join(lines)
 
     def save(self):
         with open(self.filepath(), 'w') as filehandle:

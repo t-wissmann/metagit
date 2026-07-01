@@ -22,7 +22,7 @@ from Metagit.Repository import (
     CreateRepositoryConfig,
     repositories_in_filesystem,
 )
-from Metagit.ui import run_ui
+from Metagit.ui import run_ui, page_text
 
 
 class Main:
@@ -38,6 +38,7 @@ class Main:
             'st': (Main.status, None),
             'status': (Main.status, None),
             'ui': (Main.ui, None),
+            'help': (Main.help, None),
             'fetch': (Main.fetch, lambda sub: sub.add_argument(
                 '-c', '--clone', action='store_true',
                 help='clone repository if it does not exist locally')),
@@ -182,7 +183,16 @@ j/k or the arrow keys move, f fetches (in the background), P pushes, r
 refreshes and q quits.
 """
         run_ui(self.c.repo_objects, self.c.keys(),
-               self.c.run_fg_prompt_threshold())
+               self.c.run_fg_prompt_threshold(),
+               documentation=self.c.documentation)
+
+    def help(self, argv):
+        """show the documentation for the current configuration
+
+Renders the effective configuration (settings, managed repositories, key
+bindings and available actions) and pipes it through $PAGER.
+"""
+        page_text(self.c.documentation())
 
 
 Main()
