@@ -5,22 +5,22 @@ import argparse
 import shutil
 import yaml
 
-from src import utils
-from src.utils import (
+from Metagit import utils
+from Metagit.utils import (
     UserMessage,
     ask,
     detect_git,
     pretty_print_table,
     repo_status_cells,
 )
-from src.Repository import (
+from Metagit.Repository import (
     Config,
     GitRepository,
     CreateRepositoryConfig,
     config_to_repo_entry,
     repositories_in_filesystem,
 )
-from src.ui import run_ui
+from Metagit.ui import run_ui
 
 
 class Main:
