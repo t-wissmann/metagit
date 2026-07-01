@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
         'P': 'run-fg git push',
         'r': 'refresh',
         'q': 'quit',
+        'Enter': 'run-fg $SHELL',
     },
 }
 

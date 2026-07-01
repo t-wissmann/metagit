@@ -217,14 +217,16 @@ def _parse_action(spec):
 def _key_code(keystr, curses):
     """translate a config key string into the code returned by getch().
 
-    Recognises the arrow-key symbols and otherwise takes a single character
-    verbatim. Returns None for anything it can not map.
+    Recognises the arrow-key symbols and the '\\n' escape for Return, and
+    otherwise takes a single character verbatim. Returns None for anything it
+    can not map.
     """
     special = {
         '↑': curses.KEY_UP,
         '↓': curses.KEY_DOWN,
         '←': curses.KEY_LEFT,
         '→': curses.KEY_RIGHT,
+        'Enter': ord('\n'),
     }
     if keystr in special:
         return special[keystr]
