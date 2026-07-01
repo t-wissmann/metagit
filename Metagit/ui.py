@@ -13,9 +13,11 @@ The colors are configurable too: the 'colors' section of the config maps a UI
 element (see _CELL_COLORS and the header/selected entries) to a color/attribute
 spec parsed by _ColorScheme.
 """
+import os
 import threading
 
-from .utils import UserMessage, repo_status_cells
+from .utils import UserMessage, repo_status_cells, tilde_encode
+from .Repository import locate_git_repositories, update_locate_database
 
 
 # frames of the rotating bar shown while a background command runs
@@ -173,6 +175,76 @@ def _reap_background(rows):
             row['bg'] = None
 
 
+# --- repository detection --------------------------------------------------
+
+def _detect_rows():
+    """locate git repositories in the filesystem, most recently used first.
+
+    Rebuilds metagit's locate database (like 'detect --update') and returns
+    display rows (marked 'detected') for every repository found by
+    Repository.locate_git_repositories(), sorted by the mtime of their
+    .git/index so the repositories touched most recently come first. These are
+    only shown, not added to the configuration.
+    """
+    update_locate_database()
+    found = []
+    for path in locate_git_repositories():
+        try:
+            mtime = os.path.getmtime(os.path.join(path, '.git', 'index'))
+        except OSError:
+            # no (readable) index, e.g. a fresh repository: sort it last
+            mtime = 0
+        found.append((mtime, path))
+    found.sort(key=lambda t: t[0], reverse=True)
+    return [{'repo': None, 'cells': [tilde_encode(path), '', '', '', ''],
+             'bg': None, 'detected': True}
+            for _mtime, path in found]
+
+
+def _start_detection(state):
+    """run repository detection in a background thread, tracking it on state.
+
+    A second request is ignored while a detection is still in flight. The
+    result is folded into the row list by _reap_detection once it finishes.
+    """
+    detect = state.detect
+    if detect is not None and not detect['finished']:
+        return
+    detect = {'finished': False, 'handled': False, 'rows': None, 'error': None}
+
+    def worker():
+        try:
+            detect['rows'] = _detect_rows()
+        except Exception as e:
+            # e.g. updatedb/locate missing or failing: keep the UI alive and
+            # simply show no detected repositories
+            detect['error'] = str(e)
+        finally:
+            detect['finished'] = True
+
+    detect['thread'] = threading.Thread(target=worker, daemon=True)
+    state.detect = detect
+    detect['thread'].start()
+
+
+def _reap_detection(state):
+    """append a finished detection's results to the end of the row list.
+
+    Any rows from a previous detection are dropped first so re-running the
+    detection refreshes rather than duplicates them.
+    """
+    detect = state.detect
+    if detect is None or not detect['finished'] or detect['handled']:
+        return
+    detect['handled'] = True
+    detect['thread'].join()
+    state.rows[:] = [r for r in state.rows if not r.get('detected')]
+    if detect['rows']:
+        state.rows.extend(detect['rows'])
+    # keep the selection within the (possibly shortened) row list
+    state.sel = min(state.sel, max(0, len(state.rows) - 1))
+
+
 def _display_cells(row, tick):
     """the (text, color-name) cells to render for a row.
 
@@ -250,6 +322,9 @@ class _UIState:
         self.top = 0
         self.tick = 0
         self.running = True
+        # background repository detection state (see _start_detection); None
+        # until the 'detect' action is first triggered
+        self.detect = None
         self.run_fg_prompt_threshold = run_fg_prompt_threshold
         # callable returning the documentation string shown by the 'help'
         # action (None disables it)
@@ -274,16 +349,25 @@ def _action_refresh(state, arg):
     # recompute the status of every repository, dropping any finished
     # background command
     for row in state.rows:
+        # detected rows are not managed repositories and have no status
+        if row.get('detected'):
+            continue
         if row['bg'] is not None and not row['bg']['finished']:
             continue
         row['bg'] = None
         row['cells'] = repo_status_cells(row['repo'], ', ')
 
 
+def _action_detect(state, arg):
+    _start_detection(state)
+
+
 def _action_run_bg(state, arg):
     if not state.rows:
         return
     row = state.rows[state.sel]
+    if row.get('detected'):
+        return
     _start_background(row, arg,
                       lambda repo=row['repo']: _run_repo_command(repo, arg))
 
@@ -294,6 +378,8 @@ def _action_run_fg(state, arg):
     import curses
     import time
     row = state.rows[state.sel]
+    if row.get('detected'):
+        return
     repo = row['repo']
     # leave curses mode so the git output appears on the normal terminal
     curses.endwin()
@@ -334,6 +420,7 @@ _ACTIONS = {
     'refresh': _action_refresh,
     'run-bg': _action_run_bg,
     'run-fg': _action_run_fg,
+    'detect': _action_detect,
     'help': _action_help,
 }
 
@@ -349,6 +436,9 @@ _ACTION_DOCS = {
               'repository (e.g. "run-bg git fetch")',
     'run-fg': 'run the given command in the foreground for the selected '
               'repository, leaving the UI while it runs (e.g. "run-fg $SHELL")',
+    'detect': 'locate git repositories in the filesystem and list them (most '
+              'recently used first) below the managed ones, without adding '
+              'them to the configuration',
     'help': 'show this documentation, paged through $PAGER',
 }
 
@@ -450,6 +540,7 @@ def _ui_main(stdscr, rows, keys, colors=None, run_fg_prompt_threshold=5,
     state = _UIState(stdscr, rows, run_fg_prompt_threshold, documentation)
     while state.running:
         _reap_background(rows)
+        _reap_detection(state)
         h, w = stdscr.getmaxyx()
         width = max(1, w - 1)
         display = [_display_cells(row, state.tick) for row in rows]
@@ -477,15 +568,21 @@ def _ui_main(stdscr, rows, keys, colors=None, run_fg_prompt_threshold=5,
             ri = state.top + idx
             if ri >= len(rows):
                 break
-            base = color.get('selected', curses.A_REVERSE) \
-                if ri == state.sel else curses.A_NORMAL
+            if ri == state.sel:
+                base = color.get('selected', curses.A_REVERSE)
+            elif rows[ri].get('detected'):
+                # detected (not yet managed) repositories are shown shaded
+                base = color.get('detected', curses.A_DIM)
+            else:
+                base = curses.A_NORMAL
             _draw_row(stdscr, body_top + idx, display[ri], widths,
                       base, color, width)
         stdscr.refresh()
         # while background commands run, poll so the display keeps updating;
         # otherwise block until the next key press
         busy = any(row['bg'] is not None and not row['bg']['finished']
-                   for row in rows)
+                   for row in rows) \
+            or (state.detect is not None and not state.detect['finished'])
         stdscr.timeout(200 if busy else -1)
         ch = stdscr.getch()
         if ch == -1:

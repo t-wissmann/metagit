@@ -243,8 +243,52 @@ def CreateRepositoryConfig(path = '.', needs_origin = True):
     return git
 
 
+# the locate database metagit maintains itself (see update_locate_database).
+# The system-wide database is usually built by a root cron job that excludes
+# the home directory, so metagit keeps its own database of the user's files.
+METAGIT_LOCATE_DB = os.path.expanduser('~/.locatedb')
+
+
+def locate_database():
+    """the database locate_git_repositories() reads, or None for the default.
+
+    Honours $LOCATE_PATH when set, so the user can point metagit at their own
+    or the system database (locate reads that variable natively, so we leave it
+    to locate rather than passing an explicit -d). Otherwise metagit uses its
+    own ~/.locatedb when it exists; failing that it returns None, letting locate
+    fall back to its built-in system database.
+    """
+    if os.environ.get('LOCATE_PATH'):
+        return None
+    if os.path.isfile(METAGIT_LOCATE_DB):
+        return METAGIT_LOCATE_DB
+    return None
+
+
+def update_locate_database():
+    """(re)build metagit's own locate database (~/.locatedb) over $HOME.
+
+    The system-wide locate database typically excludes the home directory, so
+    metagit maintains its own index of the user's files. This makes 'detect'
+    work without touching the system database or relying on environment
+    variables (which are awkward to set for e.g. 'ssh -t host metagit').
+    """
+    home = os.path.expanduser('~')
+    # GNU findutils updatedb only accepts the --option=value form
+    cmd = ['updatedb', '--localpaths=' + home, '--output=' + METAGIT_LOCATE_DB]
+    # discard updatedb's stderr (transient "no such file" warnings for files
+    # that vanish mid-scan); it would otherwise corrupt the ncurses display
+    proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
+    if proc.wait() != 0:
+        raise UserMessage('»updatedb« failed to build {}'.format(
+            METAGIT_LOCATE_DB))
+
+
 def locate_git_repositories():
     cmd = ['locate', '-0', '-b', '\\.git' ]
+    database = locate_database()
+    if database is not None:
+        cmd[1:1] = ['-d', database]
     proc = subprocess.Popen(cmd,
                             stdout=subprocess.PIPE)
     stdout, _ = proc.communicate()

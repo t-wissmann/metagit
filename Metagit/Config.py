@@ -29,6 +29,7 @@ DEFAULT_CONFIG = {
         'f': 'run-bg git fetch',
         'P': 'run-fg git push',
         'r': 'refresh',
+        'd': 'detect',
         'q': 'quit',
         '?': 'help',
         'Enter': 'run-fg $SHELL',
@@ -49,6 +50,7 @@ DEFAULT_CONFIG = {
         'merge-needed': 'magenta', # the 'merge needed' column
         'running': 'blue',         # a background command in progress
         'failed': 'red bold',      # a background command that failed
+        'detected': 'dim',         # repositories found by the 'detect' action
     },
 }
 

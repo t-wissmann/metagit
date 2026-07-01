@@ -21,6 +21,8 @@ from Metagit.Repository import (
     GitRepository,
     CreateRepositoryConfig,
     repositories_in_filesystem,
+    locate_git_repositories,
+    update_locate_database,
 )
 from Metagit.ui import run_ui, page_text
 
@@ -38,6 +40,10 @@ class Main:
             'st': (Main.status, None),
             'status': (Main.status, None),
             'ui': (Main.ui, None),
+            'detect': (Main.detect, lambda sub: sub.add_argument(
+                '-u', '--update', action='store_true',
+                help='rebuild metagit\'s locate database (~/.locatedb) over '
+                     'the home directory before listing')),
             'help': (Main.help, None),
             'fetch': (Main.fetch, lambda sub: sub.add_argument(
                 '-c', '--clone', action='store_true',
@@ -185,6 +191,35 @@ refreshes and q quits.
         run_ui(self.c.repo_objects, self.c.keys(), self.c.colors(),
                self.c.run_fg_prompt_threshold(),
                documentation=self.c.documentation)
+
+    def detect(self, argv):
+        """locate git repositories in the filesystem
+
+Runs Repository.locate_git_repositories() and lists the results, most recently
+used first (sorted by the mtime of each .git/index). Nothing is added to the
+configuration; this is the same discovery the interactive UI's 'detect' action
+performs.
+
+metagit reads its own locate database (~/.locatedb) by default, honouring
+$LOCATE_PATH when it is set. Pass --update to (re)build ~/.locatedb over the
+home directory first; run this once (e.g. from cron) so 'detect' finds your
+repositories even where the system database excludes the home directory.
+"""
+        if argv.update:
+            print("Building {} over the home directory..."
+                  .format(os.path.expanduser('~/.locatedb')), file=sys.stderr)
+            update_locate_database()
+        found = []
+        for path in locate_git_repositories():
+            try:
+                mtime = os.path.getmtime(os.path.join(path, '.git', 'index'))
+            except OSError:
+                mtime = 0
+            found.append((mtime, path))
+        found.sort(key=lambda t: t[0], reverse=True)
+        print("Found {} repositories:".format(len(found)), file=sys.stderr)
+        for _mtime, path in found:
+            print(path)
 
     def help(self, argv):
         """show the documentation for the current configuration
