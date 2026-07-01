@@ -17,6 +17,10 @@ from .Repository import GitRepository, GitSvnRepository
 # on top of it in Config.reload()
 DEFAULT_CONFIG = {
     'repositories': {},
+    # after a 'run-fg' command finishes, only prompt with 'Press enter to
+    # continue...' when it ran for fewer than this many seconds (long-running
+    # commands such as an interactive shell don't need a manual confirmation)
+    'run-fg-prompt-threshold': 5,
     'keys': {
         '↓': 'down',
         'j': 'down',
@@ -98,6 +102,11 @@ class Config:
     def keys(self):
         """the mapping of key to action for the interactive UI"""
         return self.data.get('keys', {})
+
+    def run_fg_prompt_threshold(self):
+        """seconds under which a finished 'run-fg' command still prompts to
+        continue; commands running longer than this return to the UI directly"""
+        return self.data.get('run-fg-prompt-threshold', 5)
 
     def repositories(self):
         """the (mutable) mapping of repository path to its config entry"""

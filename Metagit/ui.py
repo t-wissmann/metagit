@@ -18,7 +18,7 @@ from .utils import UserMessage, repo_status_cells
 _SPINNER = "|/—\\"
 
 
-def run_ui(repos, keys):
+def run_ui(repos, keys, run_fg_prompt_threshold=5):
     """interactive ncurses UI showing the repository status
 
 Navigate the scrollable table and act on the selected repository with the
@@ -33,7 +33,7 @@ configured key bindings (see the 'keys' section of the config).
     rows = []
     for p, r in repos.items():
         rows.append({'repo': r, 'cells': repo_status_cells(r, ', '), 'bg': None})
-    curses.wrapper(_ui_main, rows, keys)
+    curses.wrapper(_ui_main, rows, keys, run_fg_prompt_threshold)
 
 
 # --- background command handling ------------------------------------------
@@ -129,13 +129,14 @@ def _run_repo_command(repo, command, live=False):
 # command line).
 
 class _UIState:
-    def __init__(self, stdscr, rows):
+    def __init__(self, stdscr, rows, run_fg_prompt_threshold=5):
         self.stdscr = stdscr
         self.rows = rows
         self.sel = 0
         self.top = 0
         self.tick = 0
         self.running = True
+        self.run_fg_prompt_threshold = run_fg_prompt_threshold
 
 
 def _action_down(state, arg):
@@ -174,19 +175,24 @@ def _action_run_fg(state, arg):
     if not state.rows:
         return
     import curses
+    import time
     row = state.rows[state.sel]
     repo = row['repo']
     # leave curses mode so the git output appears on the normal terminal
     curses.endwin()
+    start = time.monotonic()
     try:
         print("Running {} in {} ...".format(arg, repo.tilde_path))
         _run_repo_command(repo, arg, live=True)
     except UserMessage as e:
         print("Error: {}".format(e))
-    try:
-        input("Press enter to continue...")
-    except (EOFError, KeyboardInterrupt):
-        pass
+    # only prompt when the command was quick; long-running commands
+    # (e.g. an interactive shell) don't need a manual confirmation
+    if time.monotonic() - start < state.run_fg_prompt_threshold:
+        try:
+            input("Press enter to continue...")
+        except (EOFError, KeyboardInterrupt):
+            pass
     # refresh the status of the affected repository
     row['cells'] = repo_status_cells(repo, ', ')
     state.stdscr.clear()
@@ -250,7 +256,7 @@ def _build_keymap(keys, curses):
 
 # --- main loop -------------------------------------------------------------
 
-def _ui_main(stdscr, rows, keys):
+def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5):
     import curses
     curses.curs_set(0)
     # use the terminal's default background (transparent) instead of black
@@ -264,7 +270,7 @@ def _ui_main(stdscr, rows, keys):
     keymap = _build_keymap(keys, curses)
     header = ["repository", "", "uncommited", "push needed", "merge needed"]
     footer = '  '.join('{}: {}'.format(k, spec) for k, spec in keys.items())
-    state = _UIState(stdscr, rows)
+    state = _UIState(stdscr, rows, run_fg_prompt_threshold)
     while state.running:
         _reap_background(rows)
         h, w = stdscr.getmaxyx()
