@@ -328,7 +328,6 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
         pass
     keymap = _build_keymap(keys, curses)
     header = ["repository", "", "uncommited", "push needed", "merge needed"]
-    footer = '  '.join('{}: {}'.format(k, spec) for k, spec in keys.items())
     state = _UIState(stdscr, rows, run_fg_prompt_threshold, documentation)
     while state.running:
         _reap_background(rows)
@@ -348,7 +347,7 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
                 parts.append(('{:' + str(widths[i]) + 's}').format(c))
             return '  '.join(parts)
         body_top = 2
-        body_height = max(1, h - body_top - 1)
+        body_height = max(1, h - body_top)
         # keep the selected row within the visible window
         if state.sel < state.top:
             state.top = state.sel
@@ -366,8 +365,6 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
             line = fmt(display[ri]).ljust(width)
             attr = curses.A_REVERSE if ri == state.sel else curses.A_NORMAL
             stdscr.addnstr(body_top + idx, 0, line, width, attr)
-        # key bindings at the bottom of the screen
-        stdscr.addnstr(h - 1, 0, footer, width, curses.A_BOLD)
         stdscr.refresh()
         # while background commands run, poll so the display keeps updating;
         # otherwise block until the next key press
