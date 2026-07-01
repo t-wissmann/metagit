@@ -26,8 +26,6 @@ quit.
         import curses
     except ImportError:
         raise UserMessage("curses is not available on this platform")
-    if not repos:
-        raise UserMessage("No repositories are configured")
     rows = []
     for p, r in repos.items():
         rows.append({'repo': r, 'cells': repo_status_cells(r, ', '), 'bg': None})
@@ -169,6 +167,9 @@ def _ui_main(stdscr, rows):
             continue
         if ch in (ord('q'), 27):
             break
+        elif not rows:
+            # nothing to navigate or act on in an empty table
+            continue
         elif ch in (ord('j'), curses.KEY_DOWN):
             sel = min(sel + 1, len(rows) - 1)
         elif ch in (ord('k'), curses.KEY_UP):

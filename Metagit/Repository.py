@@ -314,9 +314,12 @@ class Config:
                 self.data = yaml.safe_load(filehandle) or {}
             if not isinstance(self.data, dict):
                 raise UserMessage('Config must be a mapping at the top level')
-            self.build_repo_objects()
         else:
-            print("no config found")
+            # no config file yet: fall back to a default configuration with an
+            # empty repository list so commands operate on an empty collection
+            # rather than failing
+            self.data = {'repositories': {}}
+        self.build_repo_objects()
 
     def repositories(self):
         """the (mutable) mapping of repository path to its config entry"""
