@@ -6,10 +6,42 @@ object that loads them from the metagit config file.
 """
 import os
 import sys
+import copy
 import subprocess
 import yaml
 
 from .utils import UserMessage, debug, warning, tilde_encode
+
+
+# the configuration used as a starting point; the user's config file is merged
+# on top of it in Config.reload()
+DEFAULT_CONFIG = {
+    'repositories': {},
+    'keys': {
+        '↓': 'down',
+        'j': 'down',
+        '↑': 'up',
+        'k': 'up',
+        'f': 'run-bg git fetch',
+        'P': 'run-fg git push',
+        'r': 'refresh',
+        'q': 'quit',
+    },
+}
+
+
+def deep_merge(base, override):
+    """recursively merge `override` into `base`, mutating and returning `base`.
+
+    Nested mappings are merged key by key; any other value in `override`
+    replaces the one in `base`.
+    """
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
 
 
 class RepoStatus:
@@ -308,18 +340,22 @@ class Config:
         return os.path.join(config_dir, 'metagit', 'config.yaml')
 
     def reload(self):
+        # start from the default configuration and merge the user's config
+        # file (if any) on top of it, so absent sections fall back to their
+        # defaults (e.g. an empty repository list and the default key bindings)
+        self.data = copy.deepcopy(DEFAULT_CONFIG)
         configfile = Config.filepath()
         if os.path.isfile(configfile):
             with open(configfile) as filehandle:
-                self.data = yaml.safe_load(filehandle) or {}
-            if not isinstance(self.data, dict):
+                user_data = yaml.safe_load(filehandle) or {}
+            if not isinstance(user_data, dict):
                 raise UserMessage('Config must be a mapping at the top level')
-        else:
-            # no config file yet: fall back to a default configuration with an
-            # empty repository list so commands operate on an empty collection
-            # rather than failing
-            self.data = {'repositories': {}}
+            deep_merge(self.data, user_data)
         self.build_repo_objects()
+
+    def keys(self):
+        """the mapping of key to action for the interactive UI"""
+        return self.data.get('keys', {})
 
     def repositories(self):
         """the (mutable) mapping of repository path to its config entry"""

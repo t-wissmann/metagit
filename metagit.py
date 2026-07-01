@@ -174,11 +174,12 @@ locate), then the directory is simply moved (after confirmation).
     def ui(self, argv):
         """interactive ncurses UI showing the repository status
 
-Navigate the scrollable table with j/k (or the arrow keys). Press f to
-fetch (in the background) and P to push the selected repository, and q to
-quit.
+Navigate the scrollable table and act on the selected repository with the
+configured key bindings (see the 'keys' section of the config). By default:
+j/k or the arrow keys move, f fetches (in the background), P pushes, r
+refreshes and q quits.
 """
-        run_ui(self.c.repo_objects)
+        run_ui(self.c.repo_objects, self.c.keys())
 
 
 Main()
