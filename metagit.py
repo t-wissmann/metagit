@@ -13,11 +13,13 @@ from Metagit.utils import (
     pretty_print_table,
     repo_status_cells,
 )
-from Metagit.Repository import (
+from Metagit.Config import (
     Config,
+    config_to_repo_entry,
+)
+from Metagit.Repository import (
     GitRepository,
     CreateRepositoryConfig,
-    config_to_repo_entry,
     repositories_in_filesystem,
 )
 from Metagit.ui import run_ui
