@@ -33,6 +33,23 @@ DEFAULT_CONFIG = {
         '?': 'help',
         'Enter': 'run-fg $SHELL',
     },
+    # colors for the interactive UI, mapping a UI element to a color/attribute
+    # spec. A spec is a space separated list of tokens: a foreground color
+    # name, 'on <color>' for the background, and any number of attribute names
+    # (bold, dim, reverse, underline, standout, blink). Color names are the
+    # eight terminal colors (black, red, green, yellow, blue, magenta, cyan,
+    # white) plus 'default' for the terminal's default color. Examples:
+    # 'yellow', 'red bold', 'white on blue', 'default reverse'.
+    'colors': {
+        'header': 'bold',          # the table header row
+        'selected': 'reverse',     # the currently selected repository row
+        'not-present': 'red',      # repositories missing from the filesystem
+        'uncommited': 'yellow',    # the 'uncommited changes' column
+        'push-needed': 'cyan',     # the 'push needed' column
+        'merge-needed': 'magenta', # the 'merge needed' column
+        'running': 'blue',         # a background command in progress
+        'failed': 'red bold',      # a background command that failed
+    },
 }
 
 
@@ -104,6 +121,10 @@ class Config:
         """the mapping of key to action for the interactive UI"""
         return self.data.get('keys', {})
 
+    def colors(self):
+        """the mapping of UI element name to its color/attribute spec"""
+        return self.data.get('colors', {})
+
     def run_fg_prompt_threshold(self):
         """seconds under which a finished 'run-fg' command still prompts to
         continue; commands running longer than this return to the UI directly"""
@@ -169,6 +190,22 @@ class Config:
         width = max(len(name) for name in docs)
         for name, doc in docs.items():
             lines.append('  {:<{w}}  {}'.format(name, doc, w=width))
+        lines.append('')
+
+        lines.append('Colors')
+        lines.append('------')
+        lines.append('A color spec is a space separated list of a foreground')
+        lines.append('color name, "on <color>" for the background and any')
+        lines.append('attributes (bold, dim, reverse, underline, standout,')
+        lines.append('blink). Colors: black, red, green, yellow, blue, magenta,')
+        lines.append('cyan, white and default.')
+        colors = self.colors()
+        if colors:
+            width = max(len(str(name)) for name in colors)
+            for name, spec in colors.items():
+                lines.append('  {:<{w}}  {}'.format(str(name), spec, w=width))
+        else:
+            lines.append('  (none configured)')
         lines.append('')
 
         return '\n'.join(lines)

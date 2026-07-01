@@ -182,7 +182,7 @@ configured key bindings (see the 'keys' section of the config). By default:
 j/k or the arrow keys move, f fetches (in the background), P pushes, r
 refreshes and q quits.
 """
-        run_ui(self.c.repo_objects, self.c.keys(),
+        run_ui(self.c.repo_objects, self.c.keys(), self.c.colors(),
                self.c.run_fg_prompt_threshold(),
                documentation=self.c.documentation)
 

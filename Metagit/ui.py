@@ -8,6 +8,10 @@ The key bindings are configurable: the 'keys' section of the config maps a key
 to an action string. The available actions are the names registered in
 _ACTIONS below; 'run-bg' and 'run-fg' take the git command to run as an
 argument (e.g. 'run-bg git fetch').
+
+The colors are configurable too: the 'colors' section of the config maps a UI
+element (see _CELL_COLORS and the header/selected entries) to a color/attribute
+spec parsed by _ColorScheme.
 """
 import threading
 
@@ -17,8 +21,13 @@ from .utils import UserMessage, repo_status_cells
 # frames of the rotating bar shown while a background command runs
 _SPINNER = "|/—\\"
 
+# the color name used for each status column, indexed like the cells returned
+# by repo_status_cells (None leaves the column in the default color)
+_CELL_COLORS = [None, 'not-present', 'uncommited', 'push-needed', 'merge-needed']
 
-def run_ui(repos, keys, run_fg_prompt_threshold=5, documentation=None):
+
+def run_ui(repos, keys, colors=None, run_fg_prompt_threshold=5,
+           documentation=None):
     """interactive ncurses UI showing the repository status
 
 Navigate the scrollable table and act on the selected repository with the
@@ -33,7 +42,85 @@ configured key bindings (see the 'keys' section of the config).
     rows = []
     for p, r in repos.items():
         rows.append({'repo': r, 'cells': repo_status_cells(r, ', '), 'bg': None})
-    curses.wrapper(_ui_main, rows, keys, run_fg_prompt_threshold, documentation)
+    curses.wrapper(_ui_main, rows, keys, colors or {},
+                   run_fg_prompt_threshold, documentation)
+
+
+class _ColorScheme:
+    """translate the configured color specs into curses attributes.
+
+    A spec is a space separated list of tokens: a foreground color name, 'on
+    <color>' for the background color, and any number of attribute names. Color
+    pairs are allocated lazily as (foreground, background) combinations are
+    requested. Anything that can not be mapped (e.g. no color support in the
+    terminal) degrades gracefully to just the attributes it understood.
+    """
+
+    def __init__(self, specs, curses):
+        self._curses = curses
+        self._colors = {
+            'default': -1,
+            'black': curses.COLOR_BLACK,
+            'red': curses.COLOR_RED,
+            'green': curses.COLOR_GREEN,
+            'yellow': curses.COLOR_YELLOW,
+            'blue': curses.COLOR_BLUE,
+            'magenta': curses.COLOR_MAGENTA,
+            'cyan': curses.COLOR_CYAN,
+            'white': curses.COLOR_WHITE,
+        }
+        self._attrs = {
+            'normal': curses.A_NORMAL,
+            'bold': curses.A_BOLD,
+            'dim': curses.A_DIM,
+            'reverse': curses.A_REVERSE,
+            'underline': curses.A_UNDERLINE,
+            'standout': curses.A_STANDOUT,
+            'blink': curses.A_BLINK,
+        }
+        # (fg, bg) -> allocated pair index; pair 0 and 1 are reserved (1 is the
+        # transparent background set up in _ui_main), so start allocating at 2
+        self._pairs = {}
+        self._next_pair = 2
+        self._resolved = {name: self._parse(spec)
+                          for name, spec in (specs or {}).items()}
+
+    def get(self, name, default=0):
+        """the curses attribute for a configured element, or `default`"""
+        return self._resolved.get(name, default)
+
+    def _pair(self, fg, bg):
+        key = (fg, bg)
+        if key not in self._pairs:
+            idx = self._next_pair
+            try:
+                self._curses.init_pair(idx, fg, bg)
+            except self._curses.error:
+                # no (more) color pairs available: fall back to no color
+                self._pairs[key] = 0
+                return 0
+            self._pairs[key] = idx
+            self._next_pair += 1
+        return self._pairs[key]
+
+    def _parse(self, spec):
+        fg, bg, attr = -1, -1, 0
+        tokens = str(spec).split()
+        idx = 0
+        while idx < len(tokens):
+            token = tokens[idx].lower()
+            if token == 'on' and idx + 1 < len(tokens):
+                bg = self._colors.get(tokens[idx + 1].lower(), -1)
+                idx += 2
+                continue
+            if token in self._attrs:
+                attr |= self._attrs[token]
+            elif token in self._colors:
+                fg = self._colors[token]
+            idx += 1
+        if fg != -1 or bg != -1:
+            attr |= self._curses.color_pair(self._pair(fg, bg))
+        return attr
 
 
 # --- background command handling ------------------------------------------
@@ -87,24 +174,27 @@ def _reap_background(rows):
 
 
 def _display_cells(row, tick):
-    """the cells to render for a row, accounting for a background command.
+    """the (text, color-name) cells to render for a row.
 
-    A running (or failed) command replaces the two commit-count columns with
-    its status text.
+    The color name is the key looked up in the color scheme (None for the
+    default color). A running (or failed) background command replaces the two
+    commit-count columns with its status text and its own color.
     """
     cells = list(row['cells'])
-    bg = row['bg']
-    if bg is None:
-        return cells
     while len(cells) < 5:
         cells.append('')
-    if not bg['finished']:
-        status = _SPINNER[tick % len(_SPINNER)] + ' ' + bg['command']
-    else:
-        status = bg['command'] + ' failed'
-    cells[3] = status
-    cells[4] = ''
-    return cells
+    colors = list(_CELL_COLORS)
+    bg = row['bg']
+    if bg is not None:
+        if not bg['finished']:
+            cells[3] = _SPINNER[tick % len(_SPINNER)] + ' ' + bg['command']
+            colors[3] = 'running'
+        else:
+            cells[3] = bg['command'] + ' failed'
+            colors[3] = 'failed'
+        cells[4] = ''
+        colors[4] = None
+    return list(zip(cells, colors))
 
 
 def _run_repo_command(repo, command, live=False):
@@ -315,7 +405,35 @@ def _build_keymap(keys, curses):
 
 # --- main loop -------------------------------------------------------------
 
-def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
+def _draw_row(stdscr, y, cells, widths, base_attr, color, width):
+    """draw one table row of (text, color-name) cells at line `y`.
+
+    Each cell is padded to its column width and drawn with `base_attr` combined
+    with the cell's own color; `base_attr` (e.g. the selection highlight) also
+    fills the gap between columns and the rest of the line.
+    """
+    x = 0
+    for i in range(len(widths)):
+        if x >= width:
+            return
+        text, name = cells[i] if i < len(cells) else ('', None)
+        # an empty cell keeps only the row's base attribute (e.g. the selection
+        # highlight); its own color would otherwise paint the padded blanks
+        cell_attr = color.get(name) if name is not None and text else 0
+        text = ('{:' + str(widths[i]) + 's}').format(text)
+        attr = base_attr | cell_attr
+        stdscr.addnstr(y, x, text, width - x, attr)
+        x += widths[i]
+        if i < len(widths) - 1 and x < width:
+            stdscr.addnstr(y, x, '  ', width - x, base_attr)
+            x += 2
+    if x < width:
+        # extend base_attr (e.g. the selection highlight) to the line's end
+        stdscr.addnstr(y, x, ' ' * (width - x), width - x, base_attr)
+
+
+def _ui_main(stdscr, rows, keys, colors=None, run_fg_prompt_threshold=5,
+             documentation=None):
     import curses
     curses.curs_set(0)
     # use the terminal's default background (transparent) instead of black
@@ -326,6 +444,7 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
         stdscr.bkgd(' ', curses.color_pair(1))
     except curses.error:
         pass
+    color = _ColorScheme(colors or {}, curses)
     keymap = _build_keymap(keys, curses)
     header = ["repository", "", "uncommited", "push needed", "merge needed"]
     state = _UIState(stdscr, rows, run_fg_prompt_threshold, documentation)
@@ -334,18 +453,12 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
         h, w = stdscr.getmaxyx()
         width = max(1, w - 1)
         display = [_display_cells(row, state.tick) for row in rows]
-        # determine the column widths from the header and every cell
+        # determine the column widths from the header and every cell text
         widths = [len(c) for c in header]
         for cells in display:
-            for i, c in enumerate(cells):
+            for i, (text, _name) in enumerate(cells):
                 if i < len(widths):
-                    widths[i] = max(widths[i], len(c))
-        def fmt(cells):
-            parts = []
-            for i in range(len(widths)):
-                c = cells[i] if i < len(cells) else ""
-                parts.append(('{:' + str(widths[i]) + 's}').format(c))
-            return '  '.join(parts)
+                    widths[i] = max(widths[i], len(text))
         body_top = 2
         body_height = max(1, h - body_top)
         # keep the selected row within the visible window
@@ -354,17 +467,20 @@ def _ui_main(stdscr, rows, keys, run_fg_prompt_threshold=5, documentation=None):
         elif state.sel >= state.top + body_height:
             state.top = state.sel - body_height + 1
         stdscr.erase()
-        # fixed table head
-        stdscr.addnstr(0, 0, fmt(header), width, curses.A_BOLD)
+        # fixed table head (no per-column colors, so a plain (text, None) row)
+        header_cells = [(h, None) for h in header]
+        _draw_row(stdscr, 0, header_cells, widths,
+                  color.get('header', curses.A_BOLD), color, width)
         stdscr.addnstr(1, 0, '─' * width, width)
         # scrollable body
         for idx in range(body_height):
             ri = state.top + idx
             if ri >= len(rows):
                 break
-            line = fmt(display[ri]).ljust(width)
-            attr = curses.A_REVERSE if ri == state.sel else curses.A_NORMAL
-            stdscr.addnstr(body_top + idx, 0, line, width, attr)
+            base = color.get('selected', curses.A_REVERSE) \
+                if ri == state.sel else curses.A_NORMAL
+            _draw_row(stdscr, body_top + idx, display[ri], widths,
+                      base, color, width)
         stdscr.refresh()
         # while background commands run, poll so the display keeps updating;
         # otherwise block until the next key press
