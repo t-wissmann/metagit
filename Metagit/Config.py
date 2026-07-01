@@ -27,6 +27,7 @@ DEFAULT_CONFIG = {
         '↑': 'up',
         'k': 'up',
         'f': 'run-bg git fetch',
+        'F': 'run-all-bg git fetch',
         'P': 'run-fg git push',
         'r': 'refresh',
         'd': 'detect',

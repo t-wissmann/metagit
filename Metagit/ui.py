@@ -6,8 +6,8 @@ the repository name; when it finishes the row is refreshed with the new status.
 
 The key bindings are configurable: the 'keys' section of the config maps a key
 to an action string. The available actions are the names registered in
-_ACTIONS below; 'run-bg' and 'run-fg' take the git command to run as an
-argument (e.g. 'run-bg git fetch').
+_ACTIONS below; 'run-bg', 'run-all-bg' and 'run-fg' take the git command to
+run as an argument (e.g. 'run-bg git fetch').
 
 The colors are configurable too: the 'colors' section of the config maps a UI
 element (see _CELL_COLORS and the header/selected entries) to a color/attribute
@@ -372,6 +372,16 @@ def _action_run_bg(state, arg):
                       lambda repo=row['repo']: _run_repo_command(repo, arg))
 
 
+def _action_run_all_bg(state, arg):
+    # start the command in the background for every managed repository;
+    # _start_background skips any repository already running a command
+    for row in state.rows:
+        if row.get('detected'):
+            continue
+        _start_background(row, arg,
+                          lambda repo=row['repo']: _run_repo_command(repo, arg))
+
+
 def _action_run_fg(state, arg):
     if not state.rows:
         return
@@ -419,6 +429,7 @@ _ACTIONS = {
     'quit': _action_quit,
     'refresh': _action_refresh,
     'run-bg': _action_run_bg,
+    'run-all-bg': _action_run_all_bg,
     'run-fg': _action_run_fg,
     'detect': _action_detect,
     'help': _action_help,
@@ -434,6 +445,8 @@ _ACTION_DOCS = {
     'refresh': 'recompute the status of every repository',
     'run-bg': 'run the given command in the background for the selected '
               'repository (e.g. "run-bg git fetch")',
+    'run-all-bg': 'run the given command in the background for every managed '
+                  'repository (e.g. "run-all-bg git fetch")',
     'run-fg': 'run the given command in the foreground for the selected '
               'repository, leaving the UI while it runs (e.g. "run-fg $SHELL")',
     'detect': 'locate git repositories in the filesystem and list them (most '
