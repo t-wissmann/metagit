@@ -51,7 +51,7 @@ class Main:
         parsed = self.parser.parse_args()
         if parsed.verbose:
             utils.set_verbose(True)
-        method = getattr(parsed, 'func', Main.status)
+        method = getattr(parsed, 'func', Main.ui)
         try:
             res = method(self, parsed)
         except UserMessage as e:
