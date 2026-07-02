@@ -124,20 +124,42 @@ def tilde_encode(cwd = '.'):
         return abspath
 
 
-def repo_status_cells(r, separator='\n'):
-    """compute the status cells for a single repository
+def status_summary(rs, separator='\n'):
+    """summarize a RepoStatus as a single (text, color-name) status.
 
-The columns match the header used by the 'st' command:
-name, presence, uncommited changes, push needed, merge needed.
+Every kind of pending work is folded into one human readable phrase (e.g.
+'2 uncommitted changes', '2 commits need push', '5 commits behind upstream'),
+its parts joined by `separator`. The color name is that of the most
+significant pending state (a missing checkout first, then local changes, then
+commits to push, then commits to merge), or None when the repository is clean.
 """
-    rs = r.status()
-    return [
-        r.name,
-        "not present" if not rs.exists else "",
-        separator.join(filter(lambda x: x != '', [
-            countshow(rs.untracked_files, "new files", "new file"),
-            countshow(rs.uncommited_changes, "changes", "change"),
-        ])),
-        countshow(rs.unpushed_commits, "commits", "commit"),
-        countshow(rs.unmerged_commits, "commits", "commit"),
-    ]
+    if not rs.exists:
+        return "not present", 'not-present'
+    parts = filter(lambda x: x != '', [
+        countshow(rs.untracked_files, "new files", "new file"),
+        countshow(rs.uncommited_changes, "uncommitted changes",
+                  "uncommitted change"),
+        countshow(rs.unpushed_commits, "commits need push", "commit needs push"),
+        countshow(rs.unmerged_commits, "commits behind upstream",
+                  "commit behind upstream"),
+    ])
+    if rs.untracked_files or rs.uncommited_changes:
+        color = 'uncommited'
+    elif rs.unpushed_commits:
+        color = 'push-needed'
+    elif rs.unmerged_commits:
+        color = 'merge-needed'
+    else:
+        color = None
+    return separator.join(parts), color
+
+
+def repo_status_cells(r, separator='\n'):
+    """compute the (text, color-name) status cells for a single repository.
+
+The columns match the header used by the 'st' command: the repository name and
+a single combined status column (see status_summary). The name cell has no
+color (None); pass separator='\\n' for a stacked multi-line status cell or e.g.
+', ' for a one-line one.
+"""
+    return [(r.name, None), status_summary(r.status(), separator)]

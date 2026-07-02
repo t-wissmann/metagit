@@ -1,7 +1,7 @@
 """Interactive ncurses UI showing the repository status.
 
 Repositories can run a command (e.g. fetch) in the background. While such a
-command is running, its status is shown in place of the commit counts next to
+command is running, its status is shown in place of the status column next to
 the repository name; when it finishes the row is refreshed with the new status.
 
 The key bindings are configurable: the 'keys' section of the config maps a key
@@ -10,8 +10,9 @@ _ACTIONS below; 'run-bg', 'run-all-bg' and 'run-fg' take the git command to
 run as an argument (e.g. 'run-bg git fetch').
 
 The colors are configurable too: the 'colors' section of the config maps a UI
-element (see _CELL_COLORS and the header/selected entries) to a color/attribute
-spec parsed by _ColorScheme.
+element (the status color names returned by status_summary, plus the
+header/selected/running/failed/detected entries) to a color/attribute spec
+parsed by _ColorScheme.
 """
 import os
 import threading
@@ -22,10 +23,6 @@ from .Repository import locate_git_repositories, update_locate_database
 
 # frames of the rotating bar shown while a background command runs
 _SPINNER = "|/—\\"
-
-# the color name used for each status column, indexed like the cells returned
-# by repo_status_cells (None leaves the column in the default color)
-_CELL_COLORS = [None, 'not-present', 'uncommited', 'push-needed', 'merge-needed']
 
 
 def run_ui(repos, keys, colors=None, run_fg_prompt_threshold=5,
@@ -196,7 +193,8 @@ def _detect_rows():
             mtime = 0
         found.append((mtime, path))
     found.sort(key=lambda t: t[0], reverse=True)
-    return [{'repo': None, 'cells': [tilde_encode(path), '', '', '', ''],
+    return [{'repo': None,
+             'cells': [(tilde_encode(path), None), ('', None)],
              'bg': None, 'detected': True}
             for _mtime, path in found]
 
@@ -249,24 +247,20 @@ def _display_cells(row, tick):
     """the (text, color-name) cells to render for a row.
 
     The color name is the key looked up in the color scheme (None for the
-    default color). A running (or failed) background command replaces the two
-    commit-count columns with its status text and its own color.
+    default color). A running (or failed) background command replaces the
+    status column with its status text and its own color.
     """
     cells = list(row['cells'])
-    while len(cells) < 5:
-        cells.append('')
-    colors = list(_CELL_COLORS)
+    while len(cells) < 2:
+        cells.append(('', None))
     bg = row['bg']
     if bg is not None:
         if not bg['finished']:
-            cells[3] = _SPINNER[tick % len(_SPINNER)] + ' ' + bg['command']
-            colors[3] = 'running'
+            cells[1] = (_SPINNER[tick % len(_SPINNER)] + ' ' + bg['command'],
+                        'running')
         else:
-            cells[3] = bg['command'] + ' failed'
-            colors[3] = 'failed'
-        cells[4] = ''
-        colors[4] = None
-    return list(zip(cells, colors))
+            cells[1] = (bg['command'] + ' failed', 'failed')
+    return cells
 
 
 def _run_repo_command(repo, command, live=False):
@@ -549,7 +543,7 @@ def _ui_main(stdscr, rows, keys, colors=None, run_fg_prompt_threshold=5,
         pass
     color = _ColorScheme(colors or {}, curses)
     keymap = _build_keymap(keys, curses)
-    header = ["repository", "", "uncommited", "push needed", "merge needed"]
+    header = ["repository", "status"]
     state = _UIState(stdscr, rows, run_fg_prompt_threshold, documentation)
     while state.running:
         _reap_background(rows)

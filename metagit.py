@@ -170,14 +170,12 @@ locate), then the directory is simply moved (after confirmation).
         repos = self.c.repo_objects
         table = [
             [ "repository\nname",
-              "",
-              "uncommited\nchanges",
-              "push\nneeded",
-              "merge\nneeded",
+              "status",
             ]
         ]
         for p,r in repos.items():
-            table.append(repo_status_cells(r))
+            # drop the per-cell color, pretty_print_table only shows text
+            table.append([text for text, _color in repo_status_cells(r)])
         pretty_print_table(table)
 
     def ui(self, argv):
